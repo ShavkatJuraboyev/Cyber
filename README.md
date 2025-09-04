@@ -1,2 +1,2 @@
 # Cyber
-about us page with django
+about us page with python
