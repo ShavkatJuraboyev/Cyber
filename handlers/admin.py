@@ -40,7 +40,7 @@ async def start_handler(message: types.Message):
     # Faqat group va channel uchun bazaga qo‘shish
     if chat_type in ["group", "supergroup", "channel"]:
         # Eslatma: bu ADMIN_ID userga tegishli; guruh/kanda "bot" adminligi alohida
-        is_admin = 1 if message.from_user and message.from_user.id == ADMIN_ID else 0
+        is_admin = 1 if message.from_user and message.from_user.id in ADMIN_ID else 0
         await add_or_update_chat(
             chat_id=message.chat.id,
             title=message.chat.title or "Noma'lum",
@@ -49,7 +49,7 @@ async def start_handler(message: types.Message):
         )
 
     # Admin panel
-    if message.from_user and message.from_user.id == ADMIN_ID:
+    if message.from_user and message.from_user.id in ADMIN_ID:
         text = "👋 Salom Admin! Panelga xush kelibsiz."
         kb = [
             [types.KeyboardButton(text="📊 Statistikalar"),
@@ -69,7 +69,7 @@ async def start_handler(message: types.Message):
 # ========= STATISTIKA / EXPORT =========
 @router.message(F.text == "📊 Statistikalar")
 async def statistics_handler(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     chats = await get_all_chats()
     total = len(chats)
@@ -80,7 +80,7 @@ async def statistics_handler(message: types.Message):
 
 @router.message(F.text == "📄 TXT eksport")
 async def export_txt_handler(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     chats = await get_all_chats()
     file_path = export_chats_to_txt(chats)
@@ -88,7 +88,7 @@ async def export_txt_handler(message: types.Message):
 
 @router.message(F.text == "📑 PDF eksport")
 async def export_pdf_handler(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     chats = await get_all_chats()
     file_path = export_chats_to_pdf(chats)
@@ -97,14 +97,14 @@ async def export_pdf_handler(message: types.Message):
 # ========= POST YUBORISH (MATN) =========
 @router.message(F.text == "📝 Matnli post")
 async def ask_text_post(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     await message.answer(
         "✍️ Post matnini yuboring (HTML ruxsat: <b>, <i>, <a href=\"...\">...</a>):",
         parse_mode=None  # ❗ HTML sifatida emas, oddiy matn sifatida yuboriladi
     )
 
-    @router.message(lambda m: m.from_user and m.from_user.id == ADMIN_ID)
+    @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_ID)
     async def broadcast_text_post(msg: types.Message):
         chats = await get_all_chats()
         count_html = 0
@@ -153,14 +153,14 @@ async def ask_text_post(message: types.Message):
 # ========= POST YUBORISH (MEDIA) =========
 @router.message(F.text == "🖼 Media post")
 async def ask_media_post(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     await message.answer(
         "🖼 Rasm/🎬 Video/🎞 GIF (animation)/📎 Fayl yuboring.\n"
         "Caption ichida HTML linklar ishlatish mumkin."
     )
 
-    @router.message(lambda m: m.from_user and m.from_user.id == ADMIN_ID and m.content_type in {"photo","video","animation","document"})
+    @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_ID and m.content_type in {"photo","video","animation","document"})
     async def broadcast_media_post(msg: types.Message):
         chats = await get_all_chats()
         count = 0
@@ -225,7 +225,7 @@ async def remove_unsafe_files(message: types.Message):
 @router.message(F.text & (F.chat.type.in_({"group", "supergroup"})))
 async def bad_words_guard(message: types.Message):
     # Adminning o‘zini cheklamaymiz
-    if message.from_user and message.from_user.id == ADMIN_ID:
+    if message.from_user and message.from_user.id in ADMIN_ID:
         return
 
     txt = (message.text or message.caption or "").lower()
@@ -276,7 +276,7 @@ async def bad_words_guard(message: types.Message):
 # ========= ADMIN: YOMON SO‘ZLARNI BOSHQARISH =========
 @router.message(F.text == "🛡 Yomon so‘zlar")
 async def bad_words_menu(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     kb = [
         [types.KeyboardButton(text="➕ So‘z qo‘shish"),
@@ -290,10 +290,10 @@ async def bad_words_menu(message: types.Message):
 
 @router.message(F.text == "➕ So‘z qo‘shish")
 async def add_words_prompt(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     await message.answer("So‘z(lar)ni yuboring. Vergul bilan ajrating. Global uchun `global:` bilan boshlang. Masalan:\n`global: so'z1, so'z2`\n`so'z3, so'z4`")
-    @router.message(lambda m: m.from_user and m.from_user.id == ADMIN_ID)
+    @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_ID)
     async def add_words_take(m: types.Message):
         txt = (m.text or "").strip()
         target_chat = None
@@ -315,10 +315,10 @@ async def add_words_prompt(message: types.Message):
 
 @router.message(F.text == "➖ So‘z o‘chirish")
 async def remove_words_prompt(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     await message.answer("O‘chirmoqchi bo‘lgan so‘z(lar)ni yuboring. `global:` bilan boshlasangiz globaldan o‘chiriladi.")
-    @router.message(lambda m: m.from_user and m.from_user.id == ADMIN_ID)
+    @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_ID)
     async def remove_words_take(m: types.Message):
         txt = (m.text or "").strip()
         target_chat = None
@@ -339,7 +339,7 @@ async def remove_words_prompt(message: types.Message):
 
 @router.message(F.text == "📃 Ro‘yxat (global)")
 async def list_global_words(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     words = await list_bad_words(None)
     if not words:
@@ -349,7 +349,7 @@ async def list_global_words(message: types.Message):
 
 @router.message(F.text == "📃 Ro‘yxat (chat)")
 async def list_chat_words(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     cid = message.chat.id if message.chat.type in ["group","supergroup"] else None
     words = await list_bad_words(cid)
@@ -360,7 +360,7 @@ async def list_chat_words(message: types.Message):
 
 @router.message(F.text == "⏱ Mute davomiyligi")
 async def ask_choose_chat(message: types.Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     
     chats = await get_all_chats()
@@ -406,7 +406,7 @@ async def set_mute_duration(message: types.Message, state: FSMContext):
 # ===== MENU =====
 @router.message(F.text == "🛡 Fayl ruxsatlari")
 async def whitelist_menu(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     kb = [
         [types.KeyboardButton(text="➕ Foydalanuvchi qo‘shish"),
@@ -421,7 +421,7 @@ async def whitelist_menu(message: types.Message):
 # ====== ADD USER FLOW ======
 @router.message(F.text == "➕ Foydalanuvchi qo‘shish")
 async def ask_choose_chat_add(message: types.Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     chats = await get_all_chats()
     if not chats:
@@ -458,7 +458,7 @@ async def add_to_whitelist(message: types.Message, state: FSMContext):
 # ====== REMOVE USER FLOW ======
 @router.message(F.text == "➖ Foydalanuvchini o‘chirish")
 async def ask_choose_chat_remove(message: types.Message, state: FSMContext):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
     chats = await get_all_chats()
     if not chats:
@@ -494,7 +494,7 @@ async def remove_from_whitelist(message: types.Message, state: FSMContext):
 # ====== LIST WHITELIST ======
 @router.message(F.text == "📃 Ruxsatli foydalanuvchilar")
 async def list_whitelisted(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
+    if message.from_user.id not in ADMIN_ID:
         return
 
     chats = await get_all_chats()
