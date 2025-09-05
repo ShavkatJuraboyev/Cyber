@@ -36,6 +36,18 @@ async def init_db():
             UNIQUE(chat_id, user_id)
         )
         """)
+
+         # Users
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            first_name TEXT,
+            last_name TEXT,
+            username TEXT,
+            language_code TEXT,
+            joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
         await db.commit()
 
 
@@ -137,3 +149,37 @@ async def is_whitelisted(chat_id: int, user_id: int) -> bool:
         cursor = await db.execute("SELECT 1 FROM whitelist WHERE chat_id=? AND user_id=?", (chat_id, user_id))
         return await cursor.fetchone() is not None
 
+# ---------- Users ----------
+async def add_or_update_user(user):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+        INSERT INTO users (user_id, first_name, last_name, username, language_code)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT(user_id) DO UPDATE SET
+            first_name=excluded.first_name,
+            last_name=excluded.last_name,
+            username=excluded.username,
+            language_code=excluded.language_code
+        """, (
+            user.id,
+            user.first_name or "",
+            user.last_name or "",
+            user.username or "",
+            getattr(user, "language_code", None)
+        ))
+        await db.commit()
+
+async def get_all_users():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT user_id, first_name, last_name, username, language_code, joined_at FROM users ORDER BY joined_at DESC")
+        return await cursor.fetchall()
+    
+async def get_user_by_id(user_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT user_id, first_name, last_name, username, language_code, joined_at FROM users WHERE user_id=?",
+            (user_id,)
+        )
+        return await cursor.fetchone()
+
+# ---------- Users ----------

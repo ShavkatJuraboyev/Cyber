@@ -11,12 +11,16 @@ from database import (
     add_or_update_chat, get_all_chats,
     add_bad_word, remove_bad_word, list_bad_words,
     get_mute_minutes, set_mute_minutes, add_whitelist_user,
-    remove_whitelist_user, list_whitelist, is_whitelisted
+    remove_whitelist_user, list_whitelist, is_whitelisted,
+    add_or_update_user, get_all_users,get_user_by_id
 )
 from utils.file_export import export_chats_to_txt, export_chats_to_pdf
 import asyncio
 import re
 from datetime import timedelta, datetime, timezone
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+
+USERS_PER_PAGE = 20
 
 router = Router()
 class WhitelistStates(StatesGroup):
@@ -37,9 +41,11 @@ UNSAFE_EXT = {".apk", ".js", ".bat", ".exe", ".scr", ".vbs", ".cmd", ".msi", ".r
 async def start_handler(message: types.Message):
     chat_type = message.chat.type  # 'private', 'group', 'supergroup', 'channel'
 
+    # Har doim foydalanuvchini bazaga yozamiz
+    await add_or_update_user(message.from_user)
+
     # Faqat group va channel uchun bazaga qo‘shish
     if chat_type in ["group", "supergroup", "channel"]:
-        # Eslatma: bu ADMIN_ID userga tegishli; guruh/kanda "bot" adminligi alohida
         is_admin = 1 if message.from_user and message.from_user.id in ADMIN_ID else 0
         await add_or_update_chat(
             chat_id=message.chat.id,
@@ -60,11 +66,155 @@ async def start_handler(message: types.Message):
              types.KeyboardButton(text="🖼 Media post")],
             [types.KeyboardButton(text="🛡 Yomon so‘zlar"),
              types.KeyboardButton(text="⏱ Mute davomiyligi")],
+            [types.KeyboardButton(text="👥 Foydalanuvchilar")]
         ]
         keyboard = types.ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
         await message.answer(text, reply_markup=keyboard)
+
     else:
-        await message.answer("👋 Salom! Botimizga xush kelibsiz. Panel faqat admin uchun.")
+        # Oddiy foydalanuvchilar uchun xabar
+        text = (
+            "👋 Salom!\n"
+            "Bu bot guruhlarda xavfsizlikni ta’minlash uchun yaratilgan.\n\n"
+            "📌 Asosiy vazifalari:\n"
+            "• Yomon so‘zlarni filtrlash 🚫\n"
+            "• Virusli fayllarni (.apk, .exe, .bat va h.k.) o‘chirish 🦠\n"
+            "• Qoidabuzarlarni vaqtincha bloklash 🔇\n\n"
+            "👉 Botni guruhingizga qo‘shib, unga admin huquqlari bering."
+        )
+
+        # Inline tugma: guruhga qo‘shish
+        add_button = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [InlineKeyboardButton(
+                    text="➕ Guruhga qo‘shish",
+                    url=f"https://t.me/{(await message.bot.me()).username}?startgroup=new"
+                )],
+                [InlineKeyboardButton(
+                    text="ℹ️ Bot qanday ishlaydi?",
+                    callback_data="help_info"
+                )]
+            ]
+        )
+
+        await message.answer(text, reply_markup=add_button)
+
+# Qo‘llanma tugmasi bosilganda
+@router.callback_query(F.data == "help_info")
+async def show_help(call: types.CallbackQuery):
+    text = (
+        "📖 <b>Qo‘llanma</b>\n\n"
+        "1️⃣ Botni guruhingizga qo‘shing.\n"
+        "2️⃣ Botga <b>admin huquqlarini</b> bering.\n"
+        "3️⃣ Bot avtomatik ravishda:\n"
+        "   • Yomon so‘zlarni o‘chiradi 🚫\n"
+        "   • Virusli fayllarni bloklaydi 🦠\n"
+        "   • Qoidabuzarlarni vaqtincha bloklaydi 🔇\n\n"
+        "✅ Shu tariqa guruhingiz xavfsiz bo‘ladi!"
+    )
+    await call.message.answer(text, parse_mode="HTML")
+    await call.answer()
+
+# 👥 Foydalanuvchilar tugmasi
+@router.message(F.text == "👥 Foydalanuvchilar")
+async def list_users_start(message: types.Message):
+    if message.from_user.id not in ADMIN_ID:   # yoki ADMIN_ID list bo'lsa
+        return
+    await show_users_page(message, page=0)
+
+
+async def show_users_page(message_or_call, page: int):
+    users = await get_all_users()
+    if not users:
+        if isinstance(message_or_call, types.Message):
+            await message_or_call.answer("👥 Hozircha foydalanuvchilar yo‘q.")
+        else:
+            await message_or_call.message.edit_text("👥 Hozircha foydalanuvchilar yo‘q.")
+        return
+
+    total = len(users)
+    start = page * USERS_PER_PAGE
+    end = start + USERS_PER_PAGE
+    page_users = users[start:end]
+
+    text = f"👥 Foydalanuvchilar (jami: {total})\n\n"
+
+    kb_rows = []
+    # har bir foydalanuvchi uchun bitta tugma (satr)
+    for u in page_users:
+        name = f"{u[1] or ''} {u[2] or ''}".strip() or "—"
+        btn_text = f"{name} ({u[0]})"
+        kb_rows.append([
+            InlineKeyboardButton(
+                text=btn_text,
+                callback_data=f"userdetail:{u[0]}"
+            )
+        ])
+
+    # navigatsiya tugmalari (oldingi/keyingi) — bir satrga qo'yamiz
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(
+            InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"users:{page-1}")
+        )
+    if end < total:
+        nav_buttons.append(
+            InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"users:{page+1}")
+        )
+    if nav_buttons:
+        kb_rows.append(nav_buttons)
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
+
+    if isinstance(message_or_call, types.Message):
+        await message_or_call.answer(text, reply_markup=keyboard, parse_mode="HTML")
+    else:
+        await message_or_call.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+
+
+# sahifalash callback handler
+@router.callback_query(F.data.startswith("users:"))
+async def users_pagination(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_ID:
+        await call.answer("⛔ Siz admin emassiz.", show_alert=True)
+        return
+
+    page = int(call.data.split(":")[1])
+    await show_users_page(call, page)
+    await call.answer()
+
+
+# foydalanuvchi tafsilotlari
+@router.callback_query(F.data.startswith("userdetail:"))
+async def user_detail(call: types.CallbackQuery):
+    if call.from_user.id not in ADMIN_ID:
+        await call.answer("⛔ Siz admin emassiz.", show_alert=True)
+        return
+
+    user_id = int(call.data.split(":")[1])
+    user = await get_user_by_id(user_id)
+    if not user:
+        await call.answer("❌ Bunday foydalanuvchi topilmadi.", show_alert=True)
+        return
+
+    text = (
+        f"📄 <b>Foydalanuvchi tafsilotlari</b>\n\n"
+        f"🆔 ID: <code>{user[0]}</code>\n"
+        f"👤 Ism: {user[1] or '—'}\n"
+        f"👤 Familiya: {user[2] or '—'}\n"
+        f"📛 Username: {('@' + user[3]) if user[3] else '—'}\n"
+        f"🌐 Til: {user[4] or '—'}\n"
+        f"📅 Qo‘shilgan: {user[5] or '—'}\n"
+    )
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="⬅️ Orqaga", callback_data="users:0")
+        ]
+    ])
+
+    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+    await call.answer()
 
 # ========= STATISTIKA / EXPORT =========
 @router.message(F.text == "📊 Statistikalar")
@@ -523,9 +673,8 @@ async def list_whitelisted(message: types.Message):
         await message.answer(text)
 
 
-
-
 # Orqaga tugmasi
 @router.message(F.text == "⬅️ Orqaga")
 async def back_to_main(message: types.Message):
     await start_handler(message)
+
