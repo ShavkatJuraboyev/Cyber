@@ -142,17 +142,17 @@ async def go_main_menu(call: types.CallbackQuery, state: FSMContext):
 
 
 # ================== FALLBACK MESSAGE HANDLER (no state) ==================
-@router.message(F.text)
-async def fallback_message(message: types.Message, state: FSMContext):
-    # Faqat adminlar uchun
-    if not is_admin(message.from_user.id):
-        return
+# @router.message(F.text)
+# async def fallback_message(message: types.Message, state: FSMContext):
+#     # Faqat adminlar uchun
+#     if not is_admin(message.from_user.id):
+#         return
 
-    # Agar admin hech qanday state ichida bo‘lmasa
-    current_state = await state.get_state()
-    if current_state is None:
-        await message.answer("❗ Iltimos, menyudan kerakli tugmani tanlang.", 
-                             reply_markup=main_menu_kb())
+#     # Agar admin hech qanday state ichida bo‘lmasa
+#     current_state = await state.get_state()
+#     if current_state is None:
+#         await message.answer("❗ Iltimos, menyudan kerakli tugmani tanlang.", 
+#                              reply_markup=main_menu_kb())
 
 
 # ================== STATISTICS / EXPORT ==================
@@ -275,7 +275,7 @@ async def bad_words_guard(message: types.Message):
         return
 
     # Word-boundary qidiruv (diakritika-safely)
-    pattern = r"(?<!\\w)(" + "|".join(re.escape(w) for w in words) + r")(?!\\w)"
+    pattern = r"(?<!\w)(?:" + "|".join(re.escape(w) for w in words) + r")(?!\w)"
     if re.search(pattern, txt, flags=re.IGNORECASE):
         try:
             await message.delete()
@@ -333,7 +333,7 @@ async def bw_add_prompt(call: types.CallbackQuery, state: FSMContext):
     await call.answer()
 
 
-@router.message(BadWordStates.add_words, F.text)
+@router.message(BadWordStates.add_words, F.text != None)
 async def bw_add_take(m: types.Message, state: FSMContext):
     txt = (m.text or "").strip()
 
@@ -355,12 +355,16 @@ async def bw_add_take(m: types.Message, state: FSMContext):
 
         target_chat = m.chat.id
 
-    items = [w.strip() for w in txt.split(",") if w.strip()]
+    # 🔽 Har doim lower() qilib saqlash
+    items = [w.strip().lower() for w in txt.split(",") if w.strip()]
+    added = 0
     for w in items:
-        await add_bad_word(w, target_chat)
+        ok = await add_bad_word(w, target_chat)
+        if ok:
+            added += 1
 
     await m.answer(
-        f"✅ {len(items)} ta so‘z qo‘shildi. (target: {'global' if target_chat is None else 'chat'})",
+        f"✅ {added} ta so‘z qo‘shildi. (target: {'global' if target_chat is None else 'chat'})",
         reply_markup=back_to_main_kb()
     )
     await state.clear()
@@ -377,7 +381,6 @@ async def bw_remove_prompt(call: types.CallbackQuery, state: FSMContext):
 async def bw_remove_take(m: types.Message, state: FSMContext):
     txt = (m.text or "").strip()
 
-    # Super admin -> global
     if is_admin(m.from_user.id):
         target_chat = None
     else:
@@ -394,6 +397,7 @@ async def bw_remove_take(m: types.Message, state: FSMContext):
 
         target_chat = m.chat.id
 
+    # 🔽 Har doim lower() qilib o‘chirish
     items = [w.strip().lower() for w in txt.split(",") if w.strip()]
     for w in items:
         await remove_bad_word(w, target_chat)
@@ -434,19 +438,6 @@ async def ask_choose_chat(call: types.CallbackQuery, state: FSMContext):
         return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
     await state.set_state(MuteStates.choose_chat)
     await show_chat_page(call, state, page=0)
-
-    # chats = await get_all_chats()
-    # if not chats:
-    #     await call.message.edit_text("Bot hech qaysi guruhda yo‘q.", reply_markup=back_to_main_kb())
-    #     return await call.answer()
-    # kb = InlineKeyboardMarkup(inline_keyboard=[
-    #     [InlineKeyboardButton(text=title or str(chat_id), callback_data=f"mute:chat:{chat_id}")]
-    #     for chat_id, title, *_ in chats
-    # ] + [[InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")]])
-    # await state.set_state(MuteStates.choose_chat)
-    # await call.message.edit_text("Qaysi guruh uchun mute vaqtini o‘rnatmoqchisiz?", reply_markup=kb)
-    # await call.answer()
-
 
 async def show_chat_page(call: types.CallbackQuery, state: FSMContext, page: int):
     chats = await get_all_chats()
@@ -506,20 +497,25 @@ async def set_mute_duration(message: types.Message, state: FSMContext):
     if not is_admin(message.from_user.id):
         return
     data = await state.get_data()
-    chat_id = int(data.get("chat_id"))
+    chat_id = data.get("chat_id")
+    if not chat_id:
+        await message.answer("❗ Guruh tanlanmagan. Yana urinib ko'ring.", reply_markup=back_to_main_kb())
+        await state.clear()
+        return
+    chat_id = int(chat_id)
     minutes = int(message.text.strip())
 
     # (ixtiyoriy) 1–4320 oralig‘ida tekshirib qo‘yamiz
     if not (1 <= minutes <= 4320):
         return await message.answer("❗ 1–4320 oralig‘ida raqam yuboring.", reply_markup=back_to_main_kb())
 
-    await set_mute_minutes(chat_id, minutes)
-    new_value = await get_mute_minutes(chat_id)
+    ok = await set_mute_minutes(chat_id, minutes)
+    if not ok:
+        await message.answer("❌ Mute qiymatini saqlashda xato yuz berdi. Log faylni tekshiring.", reply_markup=back_to_main_kb())
+    else:
+        new_value = await get_mute_minutes(chat_id)
+        await message.answer(f"✅ Guruh ID {chat_id} uchun mute davomiyligi {new_value} daqiqa qilib saqlandi.", reply_markup=back_to_main_kb())
 
-    await message.answer(
-        f"✅ Guruh ID {chat_id} uchun mute davomiyligi {new_value} daqiqa qilib saqlandi.",
-        reply_markup=back_to_main_kb()
-    )
     await state.clear()
 
 
@@ -659,8 +655,7 @@ async def wh_add_user(message: types.Message, state: FSMContext):
     chat_id = data.get("chat_id")
     user_id = int(message.text.strip())
     await add_whitelist_user(chat_id, user_id)
-    await message.answer(f"✅ {user_id} foydalanuvchiga fayl tashlashga ruxsat berildi (chat_id={chat_id}).",
-                         reply_markup=back_to_main_kb())
+    await message.answer(f"✅ {user_id} foydalanuvchiga fayl tashlashga ruxsat berildi (chat_id={chat_id}).", reply_markup=back_to_main_kb())
     await state.clear()
 
 

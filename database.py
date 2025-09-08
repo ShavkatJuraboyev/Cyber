@@ -1,6 +1,9 @@
 import aiosqlite
+import logging
 
 DB_PATH = "chat.db"
+
+logger = logging.getLogger(__name__)
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
@@ -76,13 +79,15 @@ async def get_all_chats():
 
 
 # ---------- Bad words ----------
-async def add_bad_word(word: str, chat_id: int | None = None):
-    word = word.strip().lower()
-    if not word:
-        return
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR IGNORE INTO bad_words (chat_id, word) VALUES (?, ?)", (chat_id, word))
-        await db.commit()
+async def add_bad_word(word: str, chat_id: int | None = None) -> bool:
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("INSERT OR IGNORE INTO bad_words (chat_id, word) VALUES (?, ?)", (chat_id, word))
+            await db.commit()
+        return True
+    except Exception as e:
+        logger.exception("add_bad_word xatosi: %s", e)
+        return False
 
 async def remove_bad_word(word: str, chat_id: int | None = None):
     word = word.strip().lower()
@@ -119,15 +124,19 @@ async def get_mute_minutes(chat_id: int | None) -> int:
         row = await cursor.fetchone()
         return row[0] if row else 10
 
-async def set_mute_minutes(chat_id: int, minutes: int):
-    minutes = max(1, min(4320, int(minutes)))  # 1 daq - 3 kun
-    async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("""
-        INSERT INTO settings (chat_id, mute_minutes)
-        VALUES (?, ?)
-        ON CONFLICT(chat_id) DO UPDATE SET mute_minutes=excluded.mute_minutes
-        """, (chat_id, minutes))
-        await db.commit()
+async def set_mute_minutes(chat_id: int, minutes: int) -> bool:
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            await db.execute("""
+                INSERT INTO settings (chat_id, mute_minutes)
+                VALUES (?, ?)
+                ON CONFLICT(chat_id) DO UPDATE SET mute_minutes=excluded.mute_minutes
+            """, (chat_id, minutes))
+            await db.commit()
+        return True
+    except Exception as e:
+        logger.exception("set_mute_minutes xatosi: %s", e)
+        return False
 
 
 async def add_whitelist_user(chat_id: int, user_id: int):
