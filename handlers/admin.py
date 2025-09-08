@@ -62,8 +62,7 @@ async def start_handler(message: types.Message):
              types.KeyboardButton(text="🛡 Fayl ruxsatlari")],
             [types.KeyboardButton(text="📄 TXT eksport"),
              types.KeyboardButton(text="📑 PDF eksport")],
-            [types.KeyboardButton(text="📝 Matnli post"),
-             types.KeyboardButton(text="🖼 Media post")],
+            [types.KeyboardButton(text="🖼 Media post")],
             [types.KeyboardButton(text="🛡 Yomon so‘zlar"),
              types.KeyboardButton(text="⏱ Mute davomiyligi")],
             [types.KeyboardButton(text="👥 Foydalanuvchilar")]
@@ -244,60 +243,6 @@ async def export_pdf_handler(message: types.Message):
     file_path = export_chats_to_pdf(chats)
     await message.answer_document(types.FSInputFile(file_path))
 
-# ========= POST YUBORISH (MATN) =========
-@router.message(F.text == "📝 Matnli post")
-async def ask_text_post(message: types.Message):
-    if message.from_user.id not in ADMIN_ID:
-        return
-    await message.answer(
-        "✍️ Post matnini yuboring (HTML ruxsat: <b>, <i>, <a href=\"...\">...</a>):",
-        parse_mode=None  # ❗ HTML sifatida emas, oddiy matn sifatida yuboriladi
-    )
-
-    @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_ID)
-    async def broadcast_text_post(msg: types.Message):
-        chats = await get_all_chats()
-        count_html = 0
-        count_plain = 0
-        failed = []
-
-        text_html = msg.html_text or msg.text or ""
-        text_plain = html.escape(msg.text or "")
-
-        for chat in chats:
-            chat_id = chat[0]
-            try:
-                await msg.bot.send_message(
-                    chat_id,
-                    text_html,
-                    disable_web_page_preview=False
-                )
-                count_html += 1
-            except TelegramBadRequest:
-                try:
-                    await msg.bot.send_message(chat_id, text_plain)
-                    count_plain += 1
-                except Exception as e:
-                    failed.append(chat_id)
-            except Exception as e:
-                failed.append(chat_id)
-
-            await asyncio.sleep(0.05)
-
-        summary = (
-            f"✅ Matnli post yuborildi.\n"
-            f"📌 HTML yuborildi: {count_html}\n"
-            f"📌 Plain yuborildi: {count_plain}\n"
-        )
-        if failed:
-            summary += f"❌ Xatolik bo‘lgan chatlar: {', '.join(map(str, failed))}"
-
-        await msg.answer(summary)
-
-        try:
-            router.message_handlers.pop()
-        except Exception:
-            pass
 
 
 # ========= POST YUBORISH (MEDIA) =========
@@ -468,7 +413,9 @@ async def remove_words_prompt(message: types.Message):
     if message.from_user.id not in ADMIN_ID:
         return
     await message.answer("O‘chirmoqchi bo‘lgan so‘z(lar)ni yuboring. `global:` bilan boshlasangiz globaldan o‘chiriladi.")
-    @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_ID)
+
+    # faqat keyingi bitta xabarni ushlash uchun
+    @router.message(F.text, flags={"remove_word_mode": True})
     async def remove_words_take(m: types.Message):
         txt = (m.text or "").strip()
         target_chat = None
@@ -476,15 +423,18 @@ async def remove_words_prompt(message: types.Message):
             txt = txt.split(":", 1)[1]
             target_chat = None
         else:
-            target_chat = m.chat.id if m.chat.type in ["group","supergroup"] else None
+            target_chat = m.chat.id if m.chat.type in ["group", "supergroup"] else None
 
-        items = [w.strip() for w in txt.split(",") if w.strip()]
+        items = [w.strip().lower() for w in txt.split(",") if w.strip()]
         for w in items:
             await remove_bad_word(w, target_chat)
+
         await m.answer(f"🗑 {len(items)} ta so‘z o‘chirildi. (target: {'global' if target_chat is None else 'chat'})")
+
+        # handlerni olib tashlash
         try:
             router.message_handlers.pop()
-        except Exception:
+        except:
             pass
 
 @router.message(F.text == "📃 Ro‘yxat (global)")
