@@ -413,7 +413,9 @@ async def remove_words_prompt(message: types.Message):
     if message.from_user.id not in ADMIN_ID:
         return
     await message.answer("O‘chirmoqchi bo‘lgan so‘z(lar)ni yuboring. `global:` bilan boshlasangiz globaldan o‘chiriladi.")
-    @router.message(lambda m: m.from_user and m.from_user.id in ADMIN_ID)
+
+    # faqat keyingi bitta xabarni ushlash uchun
+    @router.message(F.text, flags={"remove_word_mode": True})
     async def remove_words_take(m: types.Message):
         txt = (m.text or "").strip()
         target_chat = None
@@ -421,15 +423,18 @@ async def remove_words_prompt(message: types.Message):
             txt = txt.split(":", 1)[1]
             target_chat = None
         else:
-            target_chat = m.chat.id if m.chat.type in ["group","supergroup"] else None
+            target_chat = m.chat.id if m.chat.type in ["group", "supergroup"] else None
 
-        items = [w.strip() for w in txt.split(",") if w.strip()]
+        items = [w.strip().lower() for w in txt.split(",") if w.strip()]
         for w in items:
             await remove_bad_word(w, target_chat)
+
         await m.answer(f"🗑 {len(items)} ta so‘z o‘chirildi. (target: {'global' if target_chat is None else 'chat'})")
+
+        # handlerni olib tashlash
         try:
             router.message_handlers.pop()
-        except Exception:
+        except:
             pass
 
 @router.message(F.text == "📃 Ro‘yxat (global)")

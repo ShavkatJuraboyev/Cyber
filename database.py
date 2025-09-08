@@ -87,8 +87,10 @@ async def add_bad_word(word: str, chat_id: int | None = None):
 async def remove_bad_word(word: str, chat_id: int | None = None):
     word = word.strip().lower()
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("DELETE FROM bad_words WHERE word=? AND (chat_id IS ? OR chat_id=?)",
-                         (word, None if chat_id is None else chat_id, chat_id))
+        if chat_id is None:
+            await db.execute("DELETE FROM bad_words WHERE word=? AND chat_id IS NULL", (word,))
+        else:
+            await db.execute("DELETE FROM bad_words WHERE word=? AND chat_id=?", (word, chat_id))
         await db.commit()
 
 async def list_bad_words(chat_id: int | None = None):
