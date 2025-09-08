@@ -2,17 +2,22 @@ ID: -1003093907402 | 5 г класс | supergroup | Admin: False
 ID: -1003068286656 | Бродяга общий строй | supergroup | Admin: False
 ID: -1003068242785 | 😘Samadovlar😊😊 | supergroup | Admin: False
 ID: -1003065538301 | 35-maktab 7"D" sinf✊⚽ | supergroup | Admin: False
+ID: -1003043935712 | ДУСЛАР | supergroup | Admin: False
 ID: -1003040618166 | Ishtixon 35 maktab 8-d sinf o'quvchilari | supergroup | Admin: False
 ID: -1003030370605 | Хавфсиз кибермакон ойлиги | supergroup | Admin: False
 ID: -1003011940606 | Иттифок ММТП -2025 | supergroup | Admin: False
 ID: -1002991562651 | 🧮 ZUKKO BOLAJON | supergroup | Admin: False
+ID: -1002991057106 | 1-D sinf 35-maktab | supergroup | Admin: False
 ID: -1002967566033 | Shajara2 | supergroup | Admin: False
 ID: -1002956568684 | 🏙115-DOM🌃 | supergroup | Admin: False
 ID: -1002949313786 | 2018- yil 🍉10-Vzvod 🍉 | supergroup | Admin: False
 ID: -1002939710257 | Группа олга бос 🏴‍☠️🏴‍☠️🏴‍☠️ | supergroup | Admin: False
 ID: -1002937902858 | СУВОН БОБО АВЛОДЛАРИ | supergroup | Admin: False
+ID: -1002928544239 | Men | supergroup | Admin: True
+ID: -1002905946493 | 35-MAKTAB QIZLARI | supergroup | Admin: False
 ID: -1002892840151 | Urgut FABERLIC 💄 mahsulotlari optim narxda | supergroup | Admin: False
 ID: -1002883145434 | Feberlicdan💣aksiyalar😍😍😍 | supergroup | Admin: False
+ID: -1002851339409 | СамДАҚИ МКҚ Курсдошлар 2005-2009-2010 | supergroup | Admin: True
 ID: -1002787553185 | Arzon va qulay narxlarda ayollar kiyimlari 😊 | supergroup | Admin: True
 ID: -1002758999806 | Юнус и Эльбек Таргибот | supergroup | Admin: True
 ID: -1002692164299 | 10_a family_🖤 | supergroup | Admin: False
@@ -22,6 +27,7 @@ ID: -1002644004100 | Bizning oila | supergroup | Admin: False
 ID: -1002628914300 | AZAMATLIK YIGITLAR | supergroup | Admin: False
 ID: -1002575050870 | Jo‘ralar 92 👍 | supergroup | Admin: False
 ID: -1002557735386 | Let's Learn IT ST | supergroup | Admin: False
+ID: -1002553755513 | 121-мактаб ЖАСОРАТ СИНФИ | supergroup | Admin: False
 ID: -1002543305789 | URGUT XABARLARI | supergroup | Admin: False
 ID: -1002538453721 | Бешкон МФЙ_2025 | supergroup | Admin: False
 ID: -1002508203377 | Quyi O'roqboyjar M.F.Y | supergroup | Admin: False
@@ -29,48 +35,78 @@ ID: -1002499193899 | Nurobod tuman IIB JXX HPB | supergroup | Admin: False
 ID: -1002471851343 | BIRLIK MAHALLASI GURUHI | supergroup | Admin: False
 ID: -1002470939171 | 2-СОН ИИБ | supergroup | Admin: False
 ID: -1002468715531 | KURPA | supergroup | Admin: False
-ID: -1002467284017 | Python test | supergroup | Admin: True
+ID: -1002467284017 | Python test | supergroup | Admin: False
+ID: -1002437702289 | Жалоловлар оиласи | supergroup | Admin: False
 ID: -1002424204963 | Qadiri Baland qadirdon jigarla💐🥀🌷🥀🌹❄️❄️🍒🍒🍀🎋❤ | supergroup | Admin: False
 ID: -1002408733124 | 82-Maktab 6" B"SINF O'quvchilari📗📘📚🖋️ | supergroup | Admin: False
+ID: -1002389512682 | OMONQO’TONLIKLAR. | supergroup | Admin: False
+ID: -1002366405961 | 6⃣0⃣4⃣➖2⃣3⃣ kursdoshlar | supergroup | Admin: False
+ID: -1002361450500 | Amaliy fanlar | supergroup | Admin: False
+ID: -1002327401012 | Сам ДУ жис-мад 2001-2005 | supergroup | Admin: False
 ID: -1002297629927 | Mangitobod MFY Chet elga ketganlar roʻyxati | supergroup | Admin: False
 ID: -1002288962287 | Telefon market | channel | Admin: False
+ID: -1002259821576 | 4смена | supergroup | Admin: False
+ID: -1002257674732 | 😁😁😁 Удар $$СИНФДОШЛАР$$😁😁😁 | supergroup | Admin: False
 ID: -1002254517173 | Ички аудит малака ошириш 2025 | supergroup | Admin: False
 ID: -1002254116882 | Sinfdoshlar | supergroup | Admin: False
 ID: -1002248515628 | Koʼmirtepa .mobile | supergroup | Admin: False
 ID: -1002219838290 | ❤️Qarindoshlar❤️ | supergroup | Admin: False
+ID: -1002218449842 | Urgut tuman 🏫121-maktabda o‘qiganlar | supergroup | Admin: False
 ID: -1002211245430 | ☺️💐 Qadri baland Qadrdonlarim ❤️❤️🌹🌸 | supergroup | Admin: False
 ID: -1002186372076 | 🖤 QARINDOSHLAR 🖤 | supergroup | Admin: False
 ID: -1002183153362 | Qarindoshlar😍 | supergroup | Admin: False
 ID: -1002173601736 | Ota-onalar guruhi (Sobir Qosimov) va (Shahboz Aslamovich) | supergroup | Admin: False
 ID: -1002153718970 | 11А синф🫡 | supergroup | Admin: False
 ID: -1002137885710 | QUYI O'ROQBOYJAR MFY FUQAROLARI | supergroup | Admin: False
+ID: -1002129751058 | СПРВ.ЖИЗЗАХ | supergroup | Admin: False
 ID: -1002126163360 | " ДЕХҚОНОБОД " МФЙ | supergroup | Admin: False
+ID: -1002100603033 | Иштихон тумани.Мусика устозлари. | supergroup | Admin: False
 ID: -1002087229947 | Ahillik News | supergroup | Admin: False
 ID: -1002085403419 | INFEKSIONNI YUKB | supergroup | Admin: False
 ID: -1002070766040 | QO‘SHNILAR 🙊🙊🙊 | supergroup | Admin: False
 ID: -1002041095927 | Машъал МФЙ гуруҳи | supergroup | Admin: False
+ID: -1002005884438 | Ipoteka Bank 50%50 | supergroup | Admin: False
+ID: -1002004948243 | ogʻaynilar🫂 | supergroup | Admin: False
+ID: -1002003170440 | СОВГА БЕРИНГ СОВГА ОЛИНГg↙️↙️ | supergroup | Admin: False
 ID: -1001978005950 | 7-A sinf 35-maktab | supergroup | Admin: False
 ID: -1001965696916 | 7 "ф" класс | supergroup | Admin: False
+ID: -1001913505423 | 🤗QARINDOSHLARIM🤗 | supergroup | Admin: False
+ID: -1001850924987 | НГС- работы | supergroup | Admin: False
 ID: -1001848380858 | КАДРДОНЛАРИМ | supergroup | Admin: False
 ID: -1001843150460 | 🇺🇿 U L F A T L A R 👊👊🇺🇿🇺🇿🤝 | supergroup | Admin: False
 ID: -1001839156436 | QORAQISMOQLIKMAN | supergroup | Admin: False
 ID: -1001831423377 | At-Termiziy MFY_YOSHLARI | supergroup | Admin: False
+ID: -1001812970011 | 👨‍👩‍👧‍👧👨‍👩‍👧‍👦👨‍👩‍👦‍👦QARINDOSHLAR👨‍👩‍👧‍👧👨‍👩‍👧‍👦👩‍👩‍👧‍👦 | supergroup | Admin: False
+ID: -1001784868504 | QARINDOSHLAR. | supergroup | Admin: False
 ID: -1001730674216 | Elmurodovlar oilasi | supergroup | Admin: False
-ID: -1001724882892 | 🌿🌿𝗘𝗥𝗦𝗔𝗚'🌿🌿💸💸💸💸💸💰💰💰💰💰 | supergroup | Admin: True
+ID: -1001724882892 | 🌿🌿𝗘𝗥𝗦𝗔𝗚'🌿🌿💸💸💸💸💸💰💰💰💰💰 | supergroup | Admin: False
 ID: -1001714138956 | Ургут Нуронийлари | supergroup | Admin: False
 ID: -1001692495653 | QARINDOSHLAR | supergroup | Admin: False
+ID: -1001678013977 | Qadrdonlar davrasi 2022 | supergroup | Admin: False
+ID: -1001672383650 | 8 ф класс | supergroup | Admin: False
 ID: -1001646154053 | ~~~Oylaviy~~~ | supergroup | Admin: False
 ID: -1001644477829 | Hangoma 🏝🇺🇿 | supergroup | Admin: False
+ID: -1001641058688 | Дустлар | supergroup | Admin: False
 ID: -1001622348300 | 💋💋 Жигарларим💋💋 | supergroup | Admin: False
 ID: -1001582683141 | К,аДрДоНлАр давраси | supergroup | Admin: False
 ID: -1001580119771 | Birlashamiz Oqmachit | supergroup | Admin: False
+ID: -1001572335796 | 222-guruh/16.10-30.10/QULAY | supergroup | Admin: False
+ID: -1001569494312 | 73414 F-10 | supergroup | Admin: False
+ID: -1001488352396 | Қорасув массив МФЙ лари | supergroup | Admin: False
+ID: -1001483730397 | 121-MAKTAB JAMOASI📖 | supergroup | Admin: False
 ID: -1001471924498 | DO'STLAR BILAN | supergroup | Admin: False
+ID: -1001444105315 | ҚАРИНДОШЛАР | supergroup | Admin: False
+ID: -1001418370104 | QARINDOSHLAR | supergroup | Admin: False
+ID: -1001415450281 | PSIXOLOGLAR N_1 | supergroup | Admin: False
 ID: -1001334072931 | Sinfdoshlar 1990-yillar📝 | supergroup | Admin: False
 ID: -1001307915440 | FARMASIFTLAR 304 | supergroup | Admin: False
 ID: -1001304015171 | Нурли йул МФЙ | supergroup | Admin: False
 ID: -1001243716339 | Do'stlar Gruppasi | supergroup | Admin: False
+ID: -1001240041335 | ƠZBEKISTON ꠵ࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣩࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧ ASALARI🐝SABOQLARI꠵ࣩࣩࣩࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧࣧ I🇺🇿 | supergroup | Admin: False
+ID: -1001200110004 | ДЕХКОНОБОДЛИКЛАР | supergroup | Admin: False
 ID: -1001193194902 | Самарканд гуллари | supergroup | Admin: False
-ID: -1001192429356 | 𝗗𝗘𝗧𝗦𝗞𝗜Y 𝗠𝗜𝗥 𝗡𝗔𝗩𝗔𝗜- 𝗭𝗔𝗥𝗔𝗙𝗦𝗵𝗔𝗡👫👫 𝗕𝗢𝗟𝗔𝗟𝗔𝗥 𝗗𝗨𝗡YOS𝗜 𝗡𝗔𝗩𝗢𝗜- 𝗭𝗔𝗥𝗔𝗙𝗦𝗵𝗢𝗡 🎠🎠🍼🍼 | supergroup | Admin: True
+ID: -1001192429356 | 𝗗𝗘𝗧𝗦𝗞𝗜Y 𝗠𝗜𝗥 𝗡𝗔𝗩𝗔𝗜- 𝗭𝗔𝗥𝗔𝗙𝗦𝗵𝗔𝗡👫👫 𝗕𝗢𝗟𝗔𝗟𝗔𝗥 𝗗𝗨𝗡YOS𝗜 𝗡𝗔𝗩𝗢𝗜- 𝗭𝗔𝗥𝗔𝗙𝗦𝗵𝗢𝗡 🎠🎠🍼🍼 | supergroup | Admin: False
+ID: -1001173796033 | Хизматдошлар 15 йил | supergroup | Admin: False
 ID: -1001171324656 | Килич састав💪😁😎 | supergroup | Admin: False
 ID: -1001169792743 | SAMARQAND GULLARI OPTOM | supergroup | Admin: False
 ID: -4915879423 | testbot | group | Admin: False
@@ -78,5 +114,8 @@ ID: -4885271146 | K | group | Admin: True
 ID: -4808167554 | 35 школа 1 "Е" класс | group | Admin: False
 ID: -4594500418 | F-1 baza | group | Admin: False
 ID: -732127389 | 35-мактаб 9"е" синф | group | Admin: False
+ID: -717841291 | 481-GURUH JISMONIY MA'DANIYAT | group | Admin: False
+ID: -404923189 | ARZIMUROD BOBO NABIRALARI | group | Admin: False
+ID: -401490622 | 🌸Qarindoshlar🌸❤👨‍👩‍👧 | group | Admin: False
 ID: 6931124678 | Noma'lum | private | Admin: False
 ID: 7227679371 | Noma'lum | private | Admin: False
