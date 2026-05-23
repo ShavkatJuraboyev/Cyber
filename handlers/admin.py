@@ -1,37 +1,65 @@
+import asyncio
+import logging
+import os
+import re
+from datetime import datetime, timedelta, timezone
+from html import escape
+from pathlib import Path
+
 from aiogram import Router, types, F
-from aiogram.filters import Command
 from aiogram.enums import ChatMemberStatus
-from aiogram.types import ChatPermissions
-from aiogram.fsm.state import StatesGroup, State
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
-from aiogram.exceptions import TelegramBadRequest
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
 
 from config import ADMIN_ID
 from database import (
-    add_or_update_chat, get_all_chats,
-    add_bad_word, remove_bad_word, list_bad_words,
-    get_mute_minutes, set_mute_minutes, add_whitelist_user,
-    remove_whitelist_user, list_whitelist, is_whitelisted,
-    add_or_update_user, get_all_users, get_user_by_id
+    add_bad_word,
+    add_or_update_chat,
+    add_or_update_user,
+    add_security_log,
+    add_unsafe_extension,
+    add_warning,
+    add_whitelist_user,
+    get_all_chats,
+    get_all_users,
+    get_chat_count,
+    get_mute_minutes,
+    get_security_logs,
+    get_settings,
+    get_user_by_id,
+    is_whitelisted,
+    list_bad_words,
+    list_unsafe_extensions,
+    list_whitelist,
+    remove_bad_word,
+    remove_unsafe_extension,
+    remove_unsafe_all_extensions,
+    remove_whitelist_user,
+    reset_warning,
+    set_mute_minutes,
+    update_setting,
 )
-from utils.file_export import export_chats_to_txt, export_chats_to_pdf
+from utils.file_export import export_chats_to_pdf, export_chats_to_txt
 
-import asyncio
-import re
-from datetime import timedelta, datetime, timezone
-
-# ================== SETTINGS ==================
-USERS_PER_PAGE = 10
-UNSAFE_EXT = {".apk", ".js", ".bat", ".exe", ".scr", ".vbs", ".cmd", ".msi", ".reg", ".ps1"}
-
+logger = logging.getLogger(__name__)
 router = Router()
 
-# ================== STATES ==================
+USERS_PER_PAGE = 10
+CHATS_PER_PAGE = 10
+
+
 class BadWordStates(StatesGroup):
-    add_scope = State()       # not used (we drive by buttons). kept for clarity
     add_words = State()
     remove_words = State()
+
+
+class MuteStates(StatesGroup):
+    choose_chat = State()
+    enter_minutes = State()
+
 
 class WhitelistStates(StatesGroup):
     add_choose_chat = State()
@@ -39,141 +67,297 @@ class WhitelistStates(StatesGroup):
     rem_choose_chat = State()
     rem_enter_user = State()
 
-class MuteStates(StatesGroup):
+
+class ExtStates(StatesGroup):
+    add_ext = State()
+    remove_ext = State()
+    remove_all = State()
+
+
+class SettingStates(StatesGroup):
     choose_chat = State()
-    enter_minutes = State()
+    enter_value = State()
+
 
 class MediaState(StatesGroup):
     waiting_media = State()
 
-# ================== HELPERS ==================
 
-def is_admin(user_id: int) -> bool:
-    return bool(user_id in ADMIN_ID)
+def is_super_admin(user_id: int | None) -> bool:
+    return bool(user_id and user_id in ADMIN_ID)
+
+
+async def is_group_admin(message_or_call) -> bool:
+    chat = message_or_call.chat if isinstance(message_or_call, types.Message) else message_or_call.message.chat
+    user = message_or_call.from_user
+    if not user:
+        return False
+    if is_super_admin(user.id):
+        return True
+    if chat.type not in {"group", "supergroup"}:
+        return False
+    try:
+        member = await message_or_call.bot.get_chat_member(chat.id, user.id)
+        return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
+    except Exception:
+        return False
 
 
 def main_menu_kb() -> InlineKeyboardMarkup:
-    kb = [
-        [InlineKeyboardButton(text="📊 Statistikalar", callback_data="stats"),
-         InlineKeyboardButton(text="📄 TXT eksport", callback_data="export:txt")],
-        [InlineKeyboardButton(text="📑 PDF eksport", callback_data="export:pdf"),
-         InlineKeyboardButton(text="🖼 Media post", callback_data="media:start")],
-        [InlineKeyboardButton(text="🛡 Yomon so‘zlar", callback_data="bw:menu"),
-         InlineKeyboardButton(text="⏱ Mute davomiyligi", callback_data="mute:menu")],
-        [InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="users:page:0"),
-         InlineKeyboardButton(text="🛡 Fayl ruxsatlari", callback_data="wh:menu")]
-    ]
-    return InlineKeyboardMarkup(inline_keyboard=kb)
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="📊 Statistika", callback_data="stats"),
+            InlineKeyboardButton(text="🧾 Oxirgi loglar", callback_data="logs"),
+        ],
+        [
+            InlineKeyboardButton(text="🛡 Yomon so‘zlar", callback_data="bw:menu"),
+            InlineKeyboardButton(text="🦠 Xavfli fayllar", callback_data="ext:menu"),
+        ],
+        [
+            InlineKeyboardButton(text="⏱ Mute va sozlamalar", callback_data="settings:menu"),
+            InlineKeyboardButton(text="✅ Oq ro‘yxat", callback_data="wh:menu"),
+        ],
+        [
+            InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="users:page:0"),
+            InlineKeyboardButton(text="🖼 Ommaviy xabar", callback_data="media:start"),
+        ],
+        [
+            InlineKeyboardButton(text="📄 TXT eksport", callback_data="export:txt"),
+            InlineKeyboardButton(text="📑 PDF eksport", callback_data="export:pdf"),
+        ],
+    ])
 
 
 def back_to_main_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")]])
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")]
+    ])
 
 
-# ================== START / HELP ==================
-@router.message(Command("start"))
+def back_to_settings_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Sozlamalarga qaytish", callback_data="settings:menu")],
+        [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")],
+    ])
+
+
+def public_kb(bot_username: str) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=f"https://t.me/{bot_username}?startgroup=new")],
+        [InlineKeyboardButton(text="ℹ️ Qo‘llanma", callback_data="help_info")],
+    ])
+
+
+def short_name(user: types.User | None) -> str:
+    if not user:
+        return "Noma’lum"
+    name = user.full_name or "Foydalanuvchi"
+    if user.username:
+        return f"{name} (@{user.username})"
+    return name
+
+
+def normalize_items(text: str) -> list[str]:
+    return [x.strip().lower() for x in re.split(r"[,\n]+", text or "") if x.strip()]
+
+
+def get_document_ext(filename: str) -> str:
+    return Path(filename or "").suffix.lower()
+
+
+def has_double_extension(filename: str) -> bool:
+    parts = Path(filename or "").name.lower().split(".")
+    return len(parts) >= 3 and ("." + parts[-2]) in {
+        ".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".xls", ".xlsx", ".txt"
+    }
+
+
+def is_archive(filename: str) -> bool:
+    return get_document_ext(filename) in {".zip", ".rar", ".7z", ".tar", ".gz"}
+
+
+def contains_bad_word(text: str, words: list[str]) -> bool:
+    if not text or not words:
+        return False
+    # Katta ro‘yxatda ham xavfsiz ishlashi uchun eng uzun so‘zlardan boshlaymiz.
+    words = sorted({w.strip().lower() for w in words if w.strip()}, key=len, reverse=True)
+    pattern = r"(?<![\w'])(" + "|".join(re.escape(w) for w in words) + r")(?![\w'])"
+    return bool(re.search(pattern, text.lower(), flags=re.IGNORECASE | re.UNICODE))
+
+
+async def delete_later(message: types.Message, seconds: int = 5):
+    await asyncio.sleep(seconds)
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+
+async def mute_user(bot, chat_id: int, user_id: int, minutes: int):
+    until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    perms = ChatPermissions(
+        can_send_messages=False,
+        can_send_audios=False,
+        can_send_documents=False,
+        can_send_photos=False,
+        can_send_videos=False,
+        can_send_video_notes=False,
+        can_send_voice_notes=False,
+        can_send_polls=False,
+        can_add_web_page_previews=False,
+    )
+    await bot.restrict_chat_member(chat_id=chat_id, user_id=user_id, permissions=perms, until_date=until)
+
+
+async def choose_chat_keyboard(prefix: str, page: int = 0) -> InlineKeyboardMarkup:
+    chats = await get_all_chats()
+    start = page * CHATS_PER_PAGE
+    end = start + CHATS_PER_PAGE
+    rows = [
+        [InlineKeyboardButton(text=(title or str(chat_id))[:60], callback_data=f"{prefix}:chat:{chat_id}")]
+        for chat_id, title, *_ in chats[start:end]
+    ]
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"{prefix}:page:{page-1}"))
+    if end < len(chats):
+        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"{prefix}:page:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+async def get_chat_link(chat: types.Chat):
+    if chat.username:
+        return f"https://t.me/{chat.username}"
+    return None
+
+
+@router.message(Command("start", "panel"))
 async def start_handler(message: types.Message):
-    chat_type = message.chat.type
-
-    # 1) Foydalanuvchini bazaga yozamiz (private/group farqsiz)
     await add_or_update_user(message.from_user)
 
-    # 2) Guruh/kanal bo'lsa chatni ham bazaga yozamiz
-    if chat_type in ["group", "supergroup", "channel"]:
-        is_admin_flag = 1 if is_admin(message.from_user.id) else 0
+    if message.chat.type in {"group", "supergroup", "channel"}:
         await add_or_update_chat(
-            chat_id=message.chat.id,
-            title=message.chat.title or "Noma'lum",
-            chat_type=chat_type,
-            is_admin=is_admin_flag
+            message.chat.id,
+            message.chat.title or "Noma’lum",
+            message.chat.type,
+            await get_chat_link(message.chat),
+            1 if is_super_admin(message.from_user.id) else 0
         )
+        await message.answer("✅ Xavfsizlik boti guruhda ishlayapti. Botga xabarlarni o‘chirish va foydalanuvchini cheklash huquqini bering.")
+        return
 
-    if is_admin(message.from_user.id):
-        await message.answer("👋 Salom Admin! Panelga xush kelibsiz.", reply_markup=main_menu_kb())
-    else:
-        text = (
-            "👋 Salom!\n"
-            "Bu bot guruhlarda xavfsizlikni ta’minlash uchun yaratilgan.\n\n"
-            "📌 Asosiy vazifalari:\n"
-            "• Yomon so‘zlarni filtrlash 🚫\n"
-            "• Xavfli fayllarni o‘chirish 🦠\n"
-            "• Qoidabuzarlarni vaqtincha bloklash 🔇\n\n"
-            "👉 Botni guruhingizga qo‘shib, unga admin huquqlari bering."
-        )
-        add_button = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(
-                    text="➕ Guruhga qo‘shish",
-                    url=f"https://t.me/{(await message.bot.me()).username}?startgroup=new"
-                )],
-                [InlineKeyboardButton(text="ℹ️ Bot qanday ishlaydi?", callback_data="help_info")]
-            ]
-        )
-        await message.answer(text, reply_markup=add_button)
+    if is_super_admin(message.from_user.id):
+        await message.answer("👋 <b>Admin panel</b>\nKerakli bo‘limni tanlang:", reply_markup=main_menu_kb())
+        return
+
+    bot_username = (await message.bot.me()).username
+    await message.answer(
+        "👋 <b>Salom!</b>\n\n"
+        "Men guruhingizni xavfsizroq qilishga yordam beraman:\n"
+        "• yomon so‘zlarni o‘chiraman;\n"
+        "• xavfli fayllarni bloklayman;\n"
+        "• qoidabuzarlarga ogohlantirish berib, kerak bo‘lsa vaqtincha mute qilaman.\n\n"
+        "Botni guruhga qo‘shing va admin huquqini bering.",
+        reply_markup=public_kb(bot_username)
+    )
 
 
 @router.callback_query(F.data == "help_info")
 async def show_help(call: types.CallbackQuery):
-    text = (
+    await call.message.edit_text(
         "📖 <b>Qo‘llanma</b>\n\n"
-        "1️⃣ Botni guruhingizga qo‘shing.\n"
-        "2️⃣ Botga <b>admin huquqlarini</b> bering.\n"
-        "3️⃣ Bot avtomatik ravishda:\n"
-        "   • Yomon so‘zlarni o‘chiradi 🚫\n"
-        "   • Xavfli fayllarni bloklaydi 🦠\n"
-        "   • Qoidabuzarlarni vaqtincha bloklaydi 🔇\n\n"
-        "✅ Shu tariqa guruhingiz xavfsiz bo‘ladi!"
+        "1️⃣ Botni guruhga qo‘shing.\n"
+        "2️⃣ Botga quyidagi admin huquqlarini bering: xabarlarni o‘chirish, foydalanuvchini cheklash.\n"
+        "3️⃣ Admin panel orqali yomon so‘zlar, xavfli fayl kengaytmalari, mute va oq ro‘yxatni sozlang.\n\n"
+        "✅ Shundan keyin bot guruhni avtomatik nazorat qiladi.",
+        reply_markup=back_to_main_kb()
     )
-    await call.message.edit_text(text, parse_mode="HTML", reply_markup=back_to_main_kb())
     await call.answer()
 
 
-# ================== MENU NAVIGATION ==================
 @router.callback_query(F.data == "menu:main")
 async def go_main_menu(call: types.CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-
-    # ❗ Eski funksiyalarni to‘xtatish uchun state tozalanadi
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
     await state.clear()
-
-    await call.message.edit_text("🔘 Asosiy menyu", reply_markup=main_menu_kb())
+    await call.message.edit_text("🏠 <b>Asosiy menyu</b>", reply_markup=main_menu_kb())
     await call.answer()
 
 
-# ================== FALLBACK MESSAGE HANDLER (no state) ==================
-# @router.message(F.text)
-# async def fallback_message(message: types.Message, state: FSMContext):
-#     # Faqat adminlar uchun
-#     if not is_admin(message.from_user.id):
-#         return
-
-#     # Agar admin hech qanday state ichida bo‘lmasa
-#     current_state = await state.get_state()
-#     if current_state is None:
-#         await message.answer("❗ Iltimos, menyudan kerakli tugmani tanlang.", 
-#                              reply_markup=main_menu_kb())
+@router.my_chat_member()
+async def chat_member_handler(event: types.ChatMemberUpdated):
+    chat = event.chat
+    status = event.new_chat_member.status
+    if chat.type in {"group", "supergroup", "channel"}:
+        is_admin_flag = 1 if status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR} else 0
+        await add_or_update_chat(chat.id, chat.title or "Noma’lum", chat.type, await get_chat_link(chat), is_admin_flag)
 
 
-# ================== STATISTICS / EXPORT ==================
+@router.message(F.new_chat_members)
+async def save_new_members(message: types.Message):
+    for user in message.new_chat_members or []:
+        if not user.is_bot:
+            await add_or_update_user(user)
+
+
+@router.message(F.left_chat_member)
+async def service_left_member(message: types.Message):
+    settings = await get_settings(message.chat.id)
+    if settings["delete_service_messages"]:
+        try:
+            await message.delete()
+        except Exception:
+            pass
+
+
 @router.callback_query(F.data == "stats")
 async def statistics_handler(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
     chats = await get_all_chats()
-    total = len(chats)
-    admins = sum(1 for c in chats if c[3] == 1)
-    normals = total - admins
-    text = f"📊 Statistikalar:\n\n👥 Umumiy: {total}\n🛡 Admin bo‘lgan: {admins}\n👤 Oddiy: {normals}"
+    users = await get_all_users()
+    bot_admin_chats = sum(1 for c in chats if c[3] == 1)
+    text = (
+        "📊 <b>Statistika</b>\n\n"
+        f"👥 Guruh/kanallar: <b>{len(chats)}</b>\n"
+        f"🛡 Bot admin bo‘lgan chatlar: <b>{bot_admin_chats}</b>\n"
+        f"👤 Saqlangan foydalanuvchilar: <b>{len(users)}</b>\n"
+        f"🦠 Global xavfli kengaytmalar: <b>{len(await list_unsafe_extensions(None))}</b>\n"
+        f"🚫 Global yomon so‘zlar: <b>{len(await list_bad_words(None))}</b>"
+    )
     await call.message.edit_text(text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
+@router.callback_query(F.data == "logs")
+async def logs_handler(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    rows = await get_security_logs(20)
+    if not rows:
+        text = "🧾 Hozircha loglar yo‘q."
+    else:
+        text = "🧾 <b>Oxirgi xavfsizlik loglari</b>\n\n"
+        for chat_id, user_id, action, reason, file_name, created_at in rows:
+            text += (
+                f"• <b>{escape(action)}</b> — {escape(reason or '—')}\n"
+                f"  Chat: <code>{chat_id}</code> | User: <code>{user_id}</code>\n"
+                f"  Fayl: {escape(file_name or '—')} | {created_at}\n\n"
+            )
+    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
+    await call.answer()
+
+
+
 @router.callback_query(F.data == "export:txt")
 async def export_txt_handler(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
     chats = await get_all_chats()
+    print(chats)
     file_path = export_chats_to_txt(chats)
     await call.message.answer_document(types.FSInputFile(file_path))
     await call.answer("✅ TXT tayyor")
@@ -181,559 +365,519 @@ async def export_txt_handler(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "export:pdf")
 async def export_pdf_handler(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
     chats = await get_all_chats()
+    print(chats)
     file_path = export_chats_to_pdf(chats)
     await call.message.answer_document(types.FSInputFile(file_path))
     await call.answer("✅ PDF tayyor")
 
 
-# ================== MEDIA BROADCAST ==================
-@router.callback_query(F.data == "media:start")
-async def ask_media_post(call: types.CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-    await state.set_state(MediaState.waiting_media)
-    await call.message.edit_text(
-        "🖼 Rasm/🎬 Video/🎞 GIF/📎 Fayl yuboring.\nCaption ichida HTML linklar ishlatish mumkin.",
-        reply_markup=back_to_main_kb()
-    )
-    await call.answer()
-
-
-@router.message(MediaState.waiting_media, F.content_type.in_({"photo","video","animation","document"}))
-async def broadcast_media_post(msg: types.Message, state: FSMContext):
-    if not is_admin(msg.from_user.id):
-        return
-    chats = await get_all_chats()
-    count = 0
-    caption = msg.html_text or None
-    for chat in chats:
-        try:
-            if msg.photo:
-                await msg.bot.send_photo(chat[0], msg.photo[-1].file_id, caption=caption)
-            elif msg.video:
-                await msg.bot.send_video(chat[0], msg.video.file_id, caption=caption)
-            elif msg.animation:
-                await msg.bot.send_animation(chat[0], msg.animation.file_id, caption=caption)
-            elif msg.document:
-                await msg.bot.send_document(chat[0], msg.document.file_id, caption=caption)
-            else:
-                continue
-            count += 1
-            await asyncio.sleep(0.06)
-        except Exception:
-            continue
-    await msg.answer(f"✅ Media post {count} chatga yuborildi.")
-    await state.clear()
-
-
-# ================== CHAT MEMBER TRACKING ==================
-@router.my_chat_member()
-async def chat_member_handler(event: types.ChatMemberUpdated):
-    chat = event.chat
-    status = event.new_chat_member.status
-    is_admin_flag = 1 if status in [ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR] else 0
-    if chat.type in ["group", "supergroup", "channel"]:
-        await add_or_update_chat(chat.id, chat.title or "Noma'lum", chat.type, is_admin_flag)
-
-
-# ================== FILE SAFETY FILTER ==================
-@router.message(F.content_type == "document")
-async def remove_unsafe_files(message: types.Message):
-    doc = message.document
-    name = (doc.file_name or "").lower()
-
-    # Guruhga xos whitelist tekshiruvi
-    if await is_whitelisted(message.chat.id, message.from_user.id):
-        return  # ruxsat berilgan bo‘lsa fayl o‘chirilmadi
-
-    if any(name.endswith(ext) for ext in UNSAFE_EXT):
-        try:
-            await message.delete()
-            info_msg = await message.answer(f"❌ {name} fayli o‘chirildi (xavfsizlik).")
-            await asyncio.sleep(2)
-            await info_msg.delete()
-        except Exception:
-            pass
-
-
-# ================== BAD WORDS FILTER (GROUPS) ==================
-@router.message(F.text & (F.chat.type.in_({"group", "supergroup"})))
-async def bad_words_guard(message: types.Message):
-    # Adminni cheklamaymiz
-    if message.from_user and is_admin(message.from_user.id):
-        return
-
-    txt = (message.text or message.caption or "").lower()
-    if not txt:
-        return
-
-    words = await list_bad_words(message.chat.id)  # chatga xos + global
-    if not words:
-        return
-
-    # Word-boundary qidiruv (diakritika-safely)
-    pattern = r"(?<!\w)(?:" + "|".join(re.escape(w) for w in words) + r")(?!\w)"
-    if re.search(pattern, txt, flags=re.IGNORECASE):
-        try:
-            await message.delete()
-        except Exception:
-            pass
-
-        # Mute
-        minutes = await get_mute_minutes(message.chat.id)
-        until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-        perms = ChatPermissions(
-            can_send_messages=False,
-            can_send_audios=False,
-            can_send_documents=False,
-            can_send_photos=False,
-            can_send_videos=False,
-            can_send_video_notes=False,
-            can_send_voice_notes=False,
-            can_send_polls=False,
-            can_add_web_page_previews=False
-        )
-        try:
-            await message.bot.restrict_chat_member(
-                chat_id=message.chat.id,
-                user_id=message.from_user.id,
-                permissions=perms,
-                until_date=until
-            )
-            warn = await message.answer(
-                f"🚫 <a href='tg://user?id={message.from_user.id}'>Foydalanuvchi</a> {minutes} daqiqaga mute qilindi.",
-                parse_mode="HTML"
-            )
-            await asyncio.sleep(5)
-            await warn.delete()
-        except Exception:
-            pass
-
-# ================== BAD WORDS ==================
 @router.callback_query(F.data == "bw:menu")
 async def bad_words_menu(call: types.CallbackQuery):
+    if not await is_group_admin(call):
+        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ So‘z qo‘shish", callback_data="bw:add")],
         [InlineKeyboardButton(text="➖ So‘z o‘chirish", callback_data="bw:remove")],
-        [InlineKeyboardButton(text="📃 Ro‘yxat (global)", callback_data="bw:list:g"),
-         InlineKeyboardButton(text="📃 Ro‘yxat (chat)", callback_data="bw:list:c")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")]
+        [
+            InlineKeyboardButton(text="📃 Global ro‘yxat", callback_data="bw:list:g"),
+            InlineKeyboardButton(text="📃 Chat ro‘yxati", callback_data="bw:list:c"),
+        ],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
     ])
-    await call.message.edit_text("🛡 Yomon so‘zlar boshqaruvi:", reply_markup=kb)
+    await call.message.edit_text("🛡 <b>Yomon so‘zlar boshqaruvi</b>", reply_markup=kb)
     await call.answer()
 
 
 @router.callback_query(F.data == "bw:add")
 async def bw_add_prompt(call: types.CallbackQuery, state: FSMContext):
+    if not await is_group_admin(call):
+        return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
     await state.set_state(BadWordStates.add_words)
-    await call.message.edit_text("So‘z(lar)ni vergul bilan ajratib yuboring.", reply_markup=back_to_main_kb())
+    await call.message.edit_text("Qo‘shiladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
     await call.answer()
 
 
-@router.message(BadWordStates.add_words, F.text != None)
-async def bw_add_take(m: types.Message, state: FSMContext):
-    txt = (m.text or "").strip()
-
-    # Super admin -> global so'z
-    if is_admin(m.from_user.id):
-        target_chat = None
-    else:
-        # Oddiy foydalanuvchi faqat guruh ichida admin bo'lsa qo'sha oladi
-        if m.chat.type not in ["group", "supergroup"]:
-            await m.answer("❌ Siz faqat guruh ichida so‘z qo‘shishingiz mumkin.")
-            await state.clear()
-            return
-
-        member = await m.bot.get_chat_member(m.chat.id, m.from_user.id)
-        if member.status not in ["administrator", "creator"]:
-            await m.answer("⛔ Siz guruh admini emassiz.")
-            await state.clear()
-            return
-
-        target_chat = m.chat.id
-
-    # 🔽 Har doim lower() qilib saqlash
-    items = [w.strip().lower() for w in txt.split(",") if w.strip()]
+@router.message(BadWordStates.add_words, F.text)
+async def bw_add_take(message: types.Message, state: FSMContext):
+    if not await is_group_admin(message):
+        return
+    target_chat = None if is_super_admin(message.from_user.id) and message.chat.type == "private" else message.chat.id
+    items = normalize_items(message.text)
     added = 0
-    for w in items:
-        ok = await add_bad_word(w, target_chat)
-        if ok:
+    for word in items:
+        if await add_bad_word(word, target_chat):
             added += 1
-
-    await m.answer(
-        f"✅ {added} ta so‘z qo‘shildi. (target: {'global' if target_chat is None else 'chat'})",
-        reply_markup=back_to_main_kb()
-    )
+    await message.answer(f"✅ {added} ta so‘z qo‘shildi.", reply_markup=back_to_main_kb())
     await state.clear()
 
 
 @router.callback_query(F.data == "bw:remove")
 async def bw_remove_prompt(call: types.CallbackQuery, state: FSMContext):
+    if not await is_group_admin(call):
+        return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
     await state.set_state(BadWordStates.remove_words)
-    await call.message.edit_text("O‘chirmoqchi bo‘lgan so‘z(lar)ni yuboring.", reply_markup=back_to_main_kb())
+    await call.message.edit_text("O‘chiriladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
     await call.answer()
 
 
 @router.message(BadWordStates.remove_words, F.text)
-async def bw_remove_take(m: types.Message, state: FSMContext):
-    txt = (m.text or "").strip()
-
-    if is_admin(m.from_user.id):
-        target_chat = None
-    else:
-        if m.chat.type not in ["group", "supergroup"]:
-            await m.answer("❌ Siz faqat guruh ichida so‘z o‘chira olasiz.")
-            await state.clear()
-            return
-
-        member = await m.bot.get_chat_member(m.chat.id, m.from_user.id)
-        if member.status not in ["administrator", "creator"]:
-            await m.answer("⛔ Siz guruh admini emassiz.")
-            await state.clear()
-            return
-
-        target_chat = m.chat.id
-
-    # 🔽 Har doim lower() qilib o‘chirish
-    items = [w.strip().lower() for w in txt.split(",") if w.strip()]
-    for w in items:
-        await remove_bad_word(w, target_chat)
-
-    await m.answer(
-        f"🗑 {len(items)} ta so‘z o‘chirildi. (target: {'global' if target_chat is None else 'chat'})",
-        reply_markup=back_to_main_kb()
-    )
+async def bw_remove_take(message: types.Message, state: FSMContext):
+    if not await is_group_admin(message):
+        return
+    target_chat = None if is_super_admin(message.from_user.id) and message.chat.type == "private" else message.chat.id
+    removed = 0
+    for word in normalize_items(message.text):
+        if await remove_bad_word(word, target_chat):
+            removed += 1
+    await message.answer(f"🗑 {removed} ta so‘z o‘chirildi.", reply_markup=back_to_main_kb())
     await state.clear()
 
 
-@router.callback_query(F.data == "bw:list:g")
-async def list_global_words(call: types.CallbackQuery):
-    words = await list_bad_words(None)
-    text = "Global ro‘yxat bo‘sh." if not words else ("Global so‘zlar:\n- " + "\n- ".join(words))
-    await call.message.edit_text(text, reply_markup=back_to_main_kb())
+@router.callback_query(F.data.in_({"bw:list:g", "bw:list:c"}))
+async def list_words(call: types.CallbackQuery):
+    if not await is_group_admin(call):
+        return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
+    chat_id = None if call.data == "bw:list:g" else call.message.chat.id
+    words = await list_bad_words(chat_id)
+    title = "Global yomon so‘zlar" if chat_id is None else "Ushbu chatdagi yomon so‘zlar"
+    text = f"📃 <b>{title}</b>\n\n" + ("\n".join(f"• {escape(w)}" for w in words) if words else "Ro‘yxat bo‘sh.")
+    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
     await call.answer()
 
 
-@router.callback_query(F.data == "bw:list:c")
-async def list_chat_words(call: types.CallbackQuery):
-    cid = call.message.chat.id if call.message.chat.type in ["group", "supergroup"] else None
-    words = await list_bad_words(cid)
-    text = (
-        "Bu chat uchun ro‘yxat bo‘sh (global so‘zlar bo‘lishi mumkin)."
-        if not words else ("Chat so‘zlari (global bilan birga):\n- " + "\n- ".join(words))
-    )
-    await call.message.edit_text(text, reply_markup=back_to_main_kb())
+@router.callback_query(F.data == "ext:menu")
+async def ext_menu(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Kengaytma qo‘shish", callback_data="ext:add")],
+        [InlineKeyboardButton(text="➖ Kengaytma o‘chirish", callback_data="ext:remove")],
+        [InlineKeyboardButton(text="🗑 Barchasini o‘chirish", callback_data="ext:remove_all")],
+        [InlineKeyboardButton(text="📃 Ro‘yxat", callback_data="ext:list")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
+    ])
+    await call.message.edit_text("🦠 <b>Xavfli fayl kengaytmalari</b>", reply_markup=kb)
     await call.answer()
 
 
-# ================== MUTE DURATION ==================
-CHATS_PER_PAGE = 10
-
-@router.callback_query(F.data == "mute:menu")
-async def ask_choose_chat(call: types.CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-    await state.set_state(MuteStates.choose_chat)
-    await show_chat_page(call, state, page=0)
-
-async def show_chat_page(call: types.CallbackQuery, state: FSMContext, page: int):
-    chats = await get_all_chats()
-    if not chats:
-        await call.message.edit_text("Bot hech qaysi guruhda yo‘q.", reply_markup=back_to_main_kb())
+@router.callback_query(F.data == "ext:add")
+async def ext_add_prompt(call: types.CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
         return
-    total = len(chats)
-    start = page * CHATS_PER_PAGE
-    end = start + CHATS_PER_PAGE
-    page_chats = chats[start:end]
-
-    kb_rows = [
-        [InlineKeyboardButton(text=title or str(chat_id), callback_data=f"mute:chat:{chat_id}")]
-        for chat_id, title, *_ in page_chats
-    ]
-
-    # Navigatsiya tugmalari
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"mute:page:{page-1}"))
-    if end < total:
-        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"mute:page:{page+1}"))
-    if nav:
-        kb_rows.append(nav)
-
-    # Asosiy menyuga qaytish tugmasi
-    kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
-
-    kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-    await call.message.edit_text("Qaysi guruh uchun mute vaqtini o‘rnatmoqchisiz?", reply_markup=kb)
-
-
-@router.callback_query(F.data.startswith("mute:page:"), MuteStates.choose_chat)
-async def paginate_chats(call: types.CallbackQuery, state: FSMContext):
-    page = int(call.data.split(":")[2])
-    await show_chat_page(call, state, page)
+    await state.set_state(ExtStates.add_ext)
+    await call.message.edit_text("Qo‘shiladigan kengaytmalarni yuboring. Masalan: <code>.exe, .apk, .js</code>", reply_markup=back_to_main_kb())
     await call.answer()
 
 
-@router.callback_query(F.data.startswith("mute:chat:"), MuteStates.choose_chat)
-async def choose_chat(callback: types.CallbackQuery, state: FSMContext):
-    chat_id = int(callback.data.split(":")[2])
+@router.message(ExtStates.add_ext, F.text)
+async def ext_add_take(message: types.Message, state: FSMContext):
+    if not is_super_admin(message.from_user.id):
+        return
+    for ext in normalize_items(message.text):
+        await add_unsafe_extension(ext, None)
+    await message.answer("✅ Kengaytmalar qo‘shildi.", reply_markup=back_to_main_kb())
+    await state.clear()
+
+
+@router.callback_query(F.data == "ext:remove")
+async def ext_remove_prompt(call: types.CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
+        return
+    await state.set_state(ExtStates.remove_ext)
+    await call.message.edit_text("O‘chiriladigan kengaytmalarni yuboring.", reply_markup=back_to_main_kb())
+    await call.answer()
+
+
+@router.message(ExtStates.remove_ext, F.text)
+async def ext_remove_take(message: types.Message, state: FSMContext):
+    if not is_super_admin(message.from_user.id):
+        return
+    for ext in normalize_items(message.text):
+        await remove_unsafe_extension(ext, None)
+    await message.answer("🗑 Kengaytmalar o‘chirildi.", reply_markup=back_to_main_kb())
+    await state.clear()
+
+
+@router.callback_query(F.data == "ext:remove_all")
+async def ext_remove_all(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return
+    await remove_unsafe_all_extensions(None)
+    await call.message.answer("🗑 Barcha xavfli kengaytmalar o‘chirildi.", reply_markup=back_to_main_kb())
+    await call.answer()
+
+@router.callback_query(ExtStates.remove_all, F.data == "ext:remove_all")
+async def ext_remove_all_confirm(call: types.CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
+        return
+    await remove_unsafe_all_extensions(None)
+    await call.message.answer("🗑 Barcha xavfli kengaytmalar o‘chirildi.", reply_markup=back_to_main_kb())
+    await state.clear()
+    await call.answer()
+
+
+@router.callback_query(F.data == "ext:list")
+async def ext_list(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return
+    exts = await list_unsafe_extensions(None)
+    text = "🦠 <b>Xavfli kengaytmalar</b>\n\n" + ("\n".join(f"• <code>{escape(e)}</code>" for e in exts) if exts else "Ro‘yxat bo‘sh.")
+    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
+    await call.answer()
+
+
+@router.callback_query(F.data == "settings:menu")
+async def settings_menu(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⏱ Mute vaqti", callback_data="set:mute_minutes")],
+        [InlineKeyboardButton(text="⚠️ Ogohlantirish limiti", callback_data="set:max_warnings")],
+        [InlineKeyboardButton(text="📦 Maksimal fayl MB", callback_data="set:max_file_mb")],
+        [InlineKeyboardButton(text="📁 Arxivlarni bloklash", callback_data="set:block_archives")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
+    ])
+    await call.message.edit_text("⚙️ <b>Guruh sozlamalari</b>\nAvval sozlama turini tanlang.", reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("set:"))
+async def setting_choose_chat(call: types.CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
+        return
+    key = call.data.split(":", 1)[1]
+    await state.update_data(setting_key=key)
+    await state.set_state(SettingStates.choose_chat)
+    await call.message.edit_text("Qaysi guruh uchun sozlama o‘zgartiriladi?", reply_markup=await choose_chat_keyboard("setting", 0))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("setting:page:"), SettingStates.choose_chat)
+async def setting_page(call: types.CallbackQuery):
+    page = int(call.data.split(":")[2])
+    await call.message.edit_reply_markup(reply_markup=await choose_chat_keyboard("setting", page))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("setting:chat:"), SettingStates.choose_chat)
+async def setting_chat_selected(call: types.CallbackQuery, state: FSMContext):
+    chat_id = int(call.data.split(":")[2])
+    data = await state.get_data()
+    key = data["setting_key"]
     await state.update_data(chat_id=chat_id)
-    current = await get_mute_minutes(chat_id)
-    await state.set_state(MuteStates.enter_minutes)
-    await callback.message.edit_text(
-        f"🔹 Guruh ID: {chat_id}\nJoriy mute davomiyligi: {current} daqiqa.\n"
-        f"Yangi qiymatni yuboring (1–4320 daqiqa):",
-        reply_markup=back_to_main_kb()
+    settings = await get_settings(chat_id)
+    labels = {
+        "mute_minutes": "Mute vaqti daqiqada",
+        "max_warnings": "Ogohlantirish limiti",
+        "max_file_mb": "Maksimal fayl hajmi MB",
+        "block_archives": "Arxivlarni bloklash: 1 = ha, 0 = yo‘q",
+    }
+    await state.set_state(SettingStates.enter_value)
+    await call.message.edit_text(
+        f"Joriy qiymat: <code>{settings[key]}</code>\n\n{labels[key]} uchun yangi qiymat yuboring.",
+        reply_markup=back_to_settings_kb()
     )
-    await callback.answer()
+    await call.answer()
 
 
-# ✅ Regexni to‘g‘riladik
-@router.message(MuteStates.enter_minutes, F.text.regexp(r"^\d{1,4}$"))
-async def set_mute_duration(message: types.Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+@router.message(SettingStates.enter_value, F.text.regexp(r"^\d{1,5}$"))
+async def setting_save(message: types.Message, state: FSMContext):
+    if not is_super_admin(message.from_user.id):
         return
     data = await state.get_data()
-    chat_id = data.get("chat_id")
-    if not chat_id:
-        await message.answer("❗ Guruh tanlanmagan. Yana urinib ko'ring.", reply_markup=back_to_main_kb())
-        await state.clear()
-        return
-    chat_id = int(chat_id)
-    minutes = int(message.text.strip())
-
-    # (ixtiyoriy) 1–4320 oralig‘ida tekshirib qo‘yamiz
-    if not (1 <= minutes <= 4320):
-        return await message.answer("❗ 1–4320 oralig‘ida raqam yuboring.", reply_markup=back_to_main_kb())
-
-    ok = await set_mute_minutes(chat_id, minutes)
-    if not ok:
-        await message.answer("❌ Mute qiymatini saqlashda xato yuz berdi. Log faylni tekshiring.", reply_markup=back_to_main_kb())
-    else:
-        new_value = await get_mute_minutes(chat_id)
-        await message.answer(f"✅ Guruh ID {chat_id} uchun mute davomiyligi {new_value} daqiqa qilib saqlandi.", reply_markup=back_to_main_kb())
-
+    key = data.get("setting_key")
+    chat_id = int(data.get("chat_id"))
+    value = int(message.text)
+    ranges = {
+        "mute_minutes": (1, 4320),
+        "max_warnings": (1, 20),
+        "max_file_mb": (1, 2000),
+        "block_archives": (0, 1),
+    }
+    lo, hi = ranges[key]
+    if not lo <= value <= hi:
+        return await message.answer(f"❗ Qiymat {lo}–{hi} oralig‘ida bo‘lishi kerak.")
+    await update_setting(chat_id, key, value)
+    await message.answer("✅ Sozlama saqlandi.", reply_markup=back_to_main_kb())
     await state.clear()
 
 
-# ❌ Noto‘g‘ri kiritmalarni holat ichida ushlash (foydali)
-@router.message(MuteStates.enter_minutes)
-async def set_mute_duration_bad_input(message: types.Message, state: FSMContext):
-    await message.answer("❗ Faqat raqam yuboring (1–4320). Yoki ⬅️ Orqaga bosing.",
-                         reply_markup=back_to_main_kb())
-
-
-
-# ================== USERS LIST (PAGINATION) ==================
-async def show_users_page(target_message: types.Message | types.CallbackQuery, page: int):
-    users = await get_all_users()
-    if not users:
-        text = "👥 Hozircha foydalanuvchilar yo‘q."
-        if isinstance(target_message, types.CallbackQuery):
-            await target_message.message.edit_text(text, reply_markup=back_to_main_kb())
-        else:
-            await target_message.answer(text, reply_markup=back_to_main_kb())
-        return
-
-    total = len(users)
-    start = page * USERS_PER_PAGE
-    end = start + USERS_PER_PAGE
-    page_users = users[start:end]
-
-    text = f"👥 Foydalanuvchilar (jami: {total})\n\n"
-
-    kb_rows = []
-    for u in page_users:
-        name = f"{u[1] or ''} {u[2] or ''}".strip() or "—"
-        btn_text = f"{name} ({u[0]})"
-        kb_rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"user:detail:{u[0]}")])
-
-    nav_buttons = []
-    if page > 0:
-        nav_buttons.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"users:page:{page-1}"))
-    if end < total:
-        nav_buttons.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"users:page:{page+1}"))
-    if nav_buttons:
-        kb_rows.append(nav_buttons)
-    kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=kb_rows)
-
-    if isinstance(target_message, types.CallbackQuery):
-        await target_message.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    else:
-        await target_message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-
-
-@router.callback_query(F.data.startswith("users:page:"))
-async def users_pagination(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-    page = int(call.data.split(":")[2])
-    await show_users_page(call, page)
-    await call.answer()
-
-
-@router.callback_query(F.data.startswith("user:detail:"))
-async def user_detail(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-    user_id = int(call.data.split(":")[2])
-    user = await get_user_by_id(user_id)
-    if not user:
-        await call.answer("❌ Bunday foydalanuvchi topilmadi.", show_alert=True)
-        return
-
-    text = (
-        f"📄 <b>Foydalanuvchi tafsilotlari</b>\n\n"
-        f"🆔 ID: <code>{user[0]}</code>\n"
-        f"👤 Ism: {user[1] or '—'}\n"
-        f"👤 Familiya: {user[2] or '—'}\n"
-        f"📛 Username: {('@' + user[3]) if user[3] else '—'}\n"
-        f"🌐 Til: {user[4] or '—'}\n"
-        f"📅 Qo‘shilgan: {user[5] or '—'}\n"
-    )
-
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="users:page:0")]
-    ])
-
-    await call.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
-    await call.answer()
-
-
-# ================== WHITELIST ==================
 @router.callback_query(F.data == "wh:menu")
 async def whitelist_menu(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Foydalanuvchi qo‘shish", callback_data="wh:add:choose_chat")],
         [InlineKeyboardButton(text="➖ Foydalanuvchini o‘chirish", callback_data="wh:rem:choose_chat")],
-        [InlineKeyboardButton(text="📃 Ruxsatli foydalanuvchilar", callback_data="wh:list")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")]
+        [InlineKeyboardButton(text="📃 Oq ro‘yxat", callback_data="wh:list")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
     ])
-    await call.message.edit_text("Fayl yuborish ruxsatlarini boshqarish:", reply_markup=kb)
+    await call.message.edit_text("✅ <b>Oq ro‘yxat</b>\nBu ro‘yxatdagi foydalanuvchilarning fayllari bloklanmaydi.", reply_markup=kb)
     await call.answer()
 
 
 @router.callback_query(F.data == "wh:add:choose_chat")
 async def wh_add_choose_chat(call: types.CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-    chats = await get_all_chats()
-    if not chats:
-        await call.message.edit_text("Bot hech qaysi guruhda yo‘q.", reply_markup=back_to_main_kb())
-        return await call.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=title or str(chat_id), callback_data=f"wh:add:chat:{chat_id}")]
-        for chat_id, title, *_ in chats
-    ] + [[InlineKeyboardButton(text="⬅️ Orqaga", callback_data="wh:menu")]])
+    if not is_super_admin(call.from_user.id):
+        return
     await state.set_state(WhitelistStates.add_choose_chat)
-    await call.message.edit_text("Qaysi guruhga foydalanuvchi qo‘shiladi?", reply_markup=kb)
+    await call.message.edit_text("Qaysi guruhga foydalanuvchi qo‘shiladi?", reply_markup=await choose_chat_keyboard("whadd", 0))
     await call.answer()
 
 
-@router.callback_query(F.data.startswith("wh:add:chat:"), WhitelistStates.add_choose_chat)
-async def wh_add_got_chat(callback: types.CallbackQuery, state: FSMContext):
-    chat_id = int(callback.data.split(":")[3])
-    await state.update_data(chat_id=chat_id)
+@router.callback_query(F.data.startswith("whadd:chat:"), WhitelistStates.add_choose_chat)
+async def wh_add_got_chat(call: types.CallbackQuery, state: FSMContext):
+    await state.update_data(chat_id=int(call.data.split(":")[2]))
     await state.set_state(WhitelistStates.add_enter_user)
-    await callback.message.edit_text("Foydalanuvchi ID raqamini yuboring (raqam ko‘rinishida).",
-                                    reply_markup=back_to_main_kb())
-    await callback.answer()
+    await call.message.edit_text("Foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
+    await call.answer()
 
 
 @router.message(WhitelistStates.add_enter_user, F.text.regexp(r"^\d+$"))
 async def wh_add_user(message: types.Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not is_super_admin(message.from_user.id):
         return
     data = await state.get_data()
-    chat_id = data.get("chat_id")
-    user_id = int(message.text.strip())
-    await add_whitelist_user(chat_id, user_id)
-    await message.answer(f"✅ {user_id} foydalanuvchiga fayl tashlashga ruxsat berildi (chat_id={chat_id}).", reply_markup=back_to_main_kb())
+    user_id = int(message.text)
+    await add_whitelist_user(int(data["chat_id"]), user_id)
+    await message.answer(f"✅ <code>{user_id}</code> oq ro‘yxatga qo‘shildi.", reply_markup=back_to_main_kb())
     await state.clear()
 
 
 @router.callback_query(F.data == "wh:rem:choose_chat")
 async def wh_rem_choose_chat(call: types.CallbackQuery, state: FSMContext):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-    chats = await get_all_chats()
-    if not chats:
-        await call.message.edit_text("Bot hech qaysi guruhda yo‘q.", reply_markup=back_to_main_kb())
-        return await call.answer()
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=title or str(chat_id), callback_data=f"wh:rem:chat:{chat_id}")]
-        for chat_id, title, *_ in chats
-    ] + [[InlineKeyboardButton(text="⬅️ Orqaga", callback_data="wh:menu")]])
+    if not is_super_admin(call.from_user.id):
+        return
     await state.set_state(WhitelistStates.rem_choose_chat)
-    await call.message.edit_text("Qaysi guruhdan foydalanuvchini o‘chirasiz?", reply_markup=kb)
+    await call.message.edit_text("Qaysi guruhdan foydalanuvchi o‘chiriladi?", reply_markup=await choose_chat_keyboard("whrem", 0))
     await call.answer()
 
 
-@router.callback_query(F.data.startswith("wh:rem:chat:"), WhitelistStates.rem_choose_chat)
-async def wh_rem_got_chat(callback: types.CallbackQuery, state: FSMContext):
-    chat_id = int(callback.data.split(":")[3])
-    await state.update_data(chat_id=chat_id)
+@router.callback_query(F.data.startswith("whrem:chat:"), WhitelistStates.rem_choose_chat)
+async def wh_rem_got_chat(call: types.CallbackQuery, state: FSMContext):
+    await state.update_data(chat_id=int(call.data.split(":")[2]))
     await state.set_state(WhitelistStates.rem_enter_user)
-    await callback.message.edit_text("O‘chirmoqchi bo‘lgan foydalanuvchi ID raqamini yuboring.",
-                                    reply_markup=back_to_main_kb())
-    await callback.answer()
+    await call.message.edit_text("O‘chiriladigan foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
+    await call.answer()
 
 
 @router.message(WhitelistStates.rem_enter_user, F.text.regexp(r"^\d+$"))
 async def wh_remove_user(message: types.Message, state: FSMContext):
-    if not is_admin(message.from_user.id):
+    if not is_super_admin(message.from_user.id):
         return
     data = await state.get_data()
-    chat_id = data.get("chat_id")
-    user_id = int(message.text.strip())
-    await remove_whitelist_user(chat_id, user_id)
-    await message.answer(f"🗑 {user_id} foydalanuvchidan fayl yuborish ruxsati olib tashlandi (chat_id={chat_id}).",
-                         reply_markup=back_to_main_kb())
+    user_id = int(message.text)
+    await remove_whitelist_user(int(data["chat_id"]), user_id)
+    await message.answer(f"🗑 <code>{user_id}</code> oq ro‘yxatdan o‘chirildi.", reply_markup=back_to_main_kb())
     await state.clear()
 
 
 @router.callback_query(F.data == "wh:list")
 async def wh_list_all(call: types.CallbackQuery):
-    if not is_admin(call.from_user.id):
-        return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-
+    if not is_super_admin(call.from_user.id):
+        return
     chats = await get_all_chats()
-    if not chats:
-        await call.message.edit_text("Bot hech qaysi guruhda yo‘q.", reply_markup=back_to_main_kb())
-        return await call.answer()
-
-    text = "📃 Guruhlar bo‘yicha oq ro‘yxat:\n\n"
+    text = "📃 <b>Guruhlar bo‘yicha oq ro‘yxat</b>\n\n"
+    found = False
     for chat_id, title, *_ in chats:
         users = await list_whitelist(chat_id)
-        if users:
-            text += f"🔹 {title} ({chat_id}):\n"
-            for u in users:
-                try:
-                    member = await call.message.bot.get_chat_member(chat_id, u)
-                    name = member.user.full_name
-                    uname = f"@{member.user.username}" if member.user.username else ""
-                    text += f"   - {name} {uname} (ID: {u})\n"
-                except Exception:
-                    text += f"   - (ID: {u}) [foydalanuvchini olish imkoni yo‘q]\n"
-            text += "\n"
-    if text.strip() == "📃 Guruhlar bo‘yicha oq ro‘yxat:":
-        await call.message.edit_text("📃 Hech bir guruhda ruxsatli foydalanuvchi yo‘q.", reply_markup=back_to_main_kb())
-    else:
-        await call.message.edit_text(text, reply_markup=back_to_main_kb())
+        if not users:
+            continue
+        found = True
+        text += f"🔹 {escape(title or str(chat_id))} — <code>{chat_id}</code>\n"
+        text += "\n".join(f"   • <code>{u}</code>" for u in users) + "\n\n"
+    if not found:
+        text += "Hozircha ruxsatli foydalanuvchi yo‘q."
+    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
     await call.answer()
 
 
-# ================== FALLBACK BACK BUTTON (message) ==================
-@router.message(F.text == "⬅️ Orqaga")
-async def back_to_main_message(message: types.Message):
-    if not is_admin(message.from_user.id):
-        return
-    await message.answer("🔘 Asosiy menyu", reply_markup=main_menu_kb())
+@router.callback_query(F.data == "media:start")
+async def ask_media_post(call: types.CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    await state.set_state(MediaState.waiting_media)
+    await call.message.edit_text("Yuboriladigan xabarni, rasmni, videoni yoki faylni yuboring.", reply_markup=back_to_main_kb())
+    await call.answer()
 
+
+@router.message(MediaState.waiting_media)
+async def broadcast_media_post(message: types.Message, state: FSMContext):
+    if not is_super_admin(message.from_user.id):
+        return
+    chats = await get_all_chats()
+    sent = 0
+    failed = 0
+    for chat_id, *_ in chats:
+        try:
+            await message.copy_to(chat_id)
+            sent += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+    await message.answer(f"✅ Xabar yuborildi: {sent} ta\n❌ Xato: {failed} ta", reply_markup=back_to_main_kb())
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("users:page:"))
+async def users_pagination(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    page = int(call.data.split(":")[2])
+    users = await get_all_users()
+    if not users:
+        return await call.message.edit_text("👥 Hozircha foydalanuvchilar yo‘q.", reply_markup=back_to_main_kb())
+    start = page * USERS_PER_PAGE
+    end = start + USERS_PER_PAGE
+    rows = []
+    for u in users[start:end]:
+        name = f"{u[1] or ''} {u[2] or ''}".strip() or "Noma’lum"
+        rows.append([InlineKeyboardButton(text=f"{name} ({u[0]})", callback_data=f"user:detail:{u[0]}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"users:page:{page-1}"))
+    if end < len(users):
+        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"users:page:{page+1}"))
+    if nav:
+        rows.append(nav)
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+    await call.message.edit_text(f"👥 <b>Foydalanuvchilar</b>\nJami: <b>{len(users)}</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("user:detail:"))
+async def user_detail(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return
+    user_id = int(call.data.split(":")[2])
+    user = await get_user_by_id(user_id)
+    if not user:
+        return await call.answer("❌ Topilmadi.", show_alert=True)
+    text = (
+        "📄 <b>Foydalanuvchi tafsilotlari</b>\n\n"
+        f"🆔 ID: <code>{user[0]}</code>\n"
+        f"👤 Ism: {escape(user[1] or '—')}\n"
+        f"👤 Familiya: {escape(user[2] or '—')}\n"
+        f"📛 Username: {('@' + escape(user[3])) if user[3] else '—'}\n"
+        f"🌐 Til: {escape(user[4] or '—')}\n"
+        f"📅 Qo‘shilgan: {escape(user[5] or '—')}"
+    )
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="users:page:0")]
+    ]))
+    await call.answer()
+
+
+@router.message(F.content_type == "document")
+async def remove_unsafe_files(message: types.Message):
+    if message.chat.type not in {"group", "supergroup"} or not message.from_user or not message.document:
+        return
+
+    await add_or_update_user(message.from_user)
+
+    if await is_group_admin(message):
+        return
+    if await is_whitelisted(message.chat.id, message.from_user.id):
+        return
+
+    doc = message.document
+    filename = doc.file_name or "nomalum_fayl"
+    lower_name = filename.lower()
+    ext = get_document_ext(lower_name)
+    settings = await get_settings(message.chat.id)
+    unsafe_exts = set(await list_unsafe_extensions(message.chat.id))
+
+    reason = None
+    if ext in unsafe_exts:
+        reason = f"xavfli kengaytma: {ext}"
+    elif has_double_extension(lower_name):
+        reason = "ikki martalik kengaytma"
+    elif settings["block_archives"] and is_archive(lower_name):
+        reason = "arxiv fayl bloklangan"
+    elif doc.file_size and doc.file_size > settings["max_file_mb"] * 1024 * 1024:
+        reason = f"fayl hajmi {settings['max_file_mb']} MB dan katta"
+
+    if not reason:
+        return
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    await add_security_log(message.chat.id, message.from_user.id, "Fayl o‘chirildi", reason, filename)
+    warn_count = await add_warning(message.chat.id, message.from_user.id)
+
+    text = (
+        f"🦠 <a href='tg://user?id={message.from_user.id}'>{escape(message.from_user.full_name)}</a>, "
+        f"faylingiz o‘chirildi.\n"
+        f"Sabab: <b>{escape(reason)}</b>\n"
+        f"Ogohlantirish: <b>{warn_count}/{settings['max_warnings']}</b>"
+    )
+
+    if warn_count >= settings["max_warnings"]:
+        try:
+            await mute_user(message.bot, message.chat.id, message.from_user.id, settings["mute_minutes"])
+            await reset_warning(message.chat.id, message.from_user.id)
+            text += f"\n🔇 Limit oshgani uchun {settings['mute_minutes']} daqiqaga yozish cheklovi qo‘yildi."
+            await add_security_log(message.chat.id, message.from_user.id, "Mute", "fayl ogohlantirish limiti", filename)
+        except Exception as exc:
+            logger.exception("Mute xatosi: %s", exc)
+
+    info = await message.answer(text)
+    asyncio.create_task(delete_later(info, 10))
+
+
+@router.message((F.text | F.caption) & (F.chat.type.in_({"group", "supergroup"})))
+async def bad_words_guard(message: types.Message):
+    if not message.from_user:
+        return
+
+    await add_or_update_user(message.from_user)
+
+    if await is_group_admin(message):
+        return
+
+    text = message.text or message.caption or ""
+    words = await list_bad_words(message.chat.id)
+    if not contains_bad_word(text, words):
+        return
+
+    settings = await get_settings(message.chat.id)
+
+    try:
+        await message.delete()
+    except Exception:
+        pass
+
+    warn_count = await add_warning(message.chat.id, message.from_user.id)
+    await add_security_log(message.chat.id, message.from_user.id, "Xabar o‘chirildi", "yomon so‘z", "")
+
+    warn_text = (
+        f"🚫 <a href='tg://user?id={message.from_user.id}'>{escape(message.from_user.full_name)}</a>, "
+        f"guruh qoidalariga zid so‘z ishlatildi.\n"
+        f"Ogohlantirish: <b>{warn_count}/{settings['max_warnings']}</b>"
+    )
+
+    if warn_count >= settings["max_warnings"]:
+        try:
+            await mute_user(message.bot, message.chat.id, message.from_user.id, settings["mute_minutes"])
+            await reset_warning(message.chat.id, message.from_user.id)
+            warn_text += f"\n🔇 {settings['mute_minutes']} daqiqaga yozish cheklovi qo‘yildi."
+            await add_security_log(message.chat.id, message.from_user.id, "Mute", "yomon so‘z limiti", "")
+        except Exception as exc:
+            logger.exception("Mute xatosi: %s", exc)
+
+    warn = await message.answer(warn_text)
+    asyncio.create_task(delete_later(warn, 10))
+
+
+@router.message()
+async def collect_users_and_chats(message: types.Message):
+    if message.from_user:
+        await add_or_update_user(message.from_user)
+    if message.chat.type in {"group", "supergroup", "channel"}:
+        await add_or_update_chat(message.chat.id, message.chat.title or "Noma’lum", message.chat.type, await get_chat_link(message.chat), 0)

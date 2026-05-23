@@ -1,14 +1,24 @@
-## SErver IIV 
-BOT_TOKEN = "7561947318:AAFwyXs6N9MRGfsX6-2q5Hb4jnXSDVmEXMc"
-ADMIN_ID = [1421622919, 799206961, 6880863361]
-DB_PATH = "chats.db"
+import os
+from pathlib import Path
 
-## Server Baxmal
-# BOT_TOKEN = "8098479354:AAEZXqMtloXoXPPDX79W-pnjWcj5rm620vQ"
-# ADMIN_ID = [1421622919, 1018086491]
-# DB_PATH = "chats.db"
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
-## Localhost
-# BOT_TOKEN = "6155323455:AAHYj4rVaIIiTAQhESrP3lWT16LtJXNZxlg"
-# ADMIN_ID = [1421622919]
-# DB_PATH = "chats.db"
+BASE_DIR = Path(__file__).resolve().parent
+
+BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
+ADMIN_ID = [
+    int(x.strip())
+    for x in os.getenv("ADMIN_IDS", "").split(",")
+    if x.strip().isdigit()
+]
+DB_PATH = os.getenv("DB_PATH", str(BASE_DIR / "chat.db"))
+LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
+
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN .env faylda kiritilmagan.")
+if not ADMIN_ID:
+    raise RuntimeError("ADMIN_IDS .env faylda kiritilmagan. Masalan: ADMIN_IDS=123,456")

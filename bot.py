@@ -1,14 +1,18 @@
 import asyncio
 import logging
+
 from aiogram import Bot, Dispatcher
-from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 
-from config import BOT_TOKEN
-from handlers import admin
+from config import BOT_TOKEN, LOG_LEVEL
 from database import init_db
+from handlers import admin
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(
+    level=getattr(logging, LOG_LEVEL, logging.INFO),
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+)
 logger = logging.getLogger(__name__)
 
 bot = Bot(
@@ -22,7 +26,7 @@ async def main():
     await init_db()
     dp.include_router(admin.router)
     logger.info("🤖 Bot ishga tushdi...")
-    await dp.start_polling(bot)
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 
 if __name__ == "__main__":
