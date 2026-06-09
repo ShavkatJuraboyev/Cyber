@@ -110,6 +110,27 @@ async def init_db():
         )
         """)
 
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_links (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            code TEXT NOT NULL UNIQUE,
+            created_by INTEGER,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_link_chats (
+            link_id INTEGER NOT NULL,
+            chat_id INTEGER NOT NULL,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY(link_id, chat_id),
+            FOREIGN KEY(link_id) REFERENCES referral_links(id) ON DELETE CASCADE,
+            FOREIGN KEY(chat_id) REFERENCES chats(chat_id) ON DELETE CASCADE
+        )
+        """)
+
 
         await db.commit()
 
@@ -378,4 +399,68 @@ async def get_security_logs(limit: int = 20):
             ORDER BY id DESC
             LIMIT ?
         """, (limit,))
+        return await cursor.fetchall()
+
+
+async def create_referral_link(name: str, code: str, created_by: int | None = None) -> int:
+    name = (name or "").strip() or "Nomsiz havola"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "INSERT INTO referral_links (name, code, created_by) VALUES (?, ?, ?)",
+            (name, code, created_by)
+        )
+        await db.commit()
+        return cursor.lastrowid
+
+
+async def get_referral_link_by_code(code: str):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, name, code, created_by, created_at FROM referral_links WHERE code=?",
+            (code,)
+        )
+        return await cursor.fetchone()
+
+
+async def track_referral_chat(code: str, chat_id: int) -> bool:
+    link = await get_referral_link_by_code(code)
+    if not link:
+        return False
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            "INSERT OR IGNORE INTO referral_link_chats (link_id, chat_id) VALUES (?, ?)",
+            (link[0], chat_id)
+        )
+        await db.commit()
+        return True
+
+
+async def get_referral_stats():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT
+                rl.id,
+                rl.name,
+                rl.code,
+                COUNT(DISTINCT rlc.chat_id) AS groups_count,
+                COALESCE(SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS admin_count,
+                rl.created_at
+            FROM referral_links rl
+            LEFT JOIN referral_link_chats rlc ON rlc.link_id = rl.id
+            LEFT JOIN chats c ON c.chat_id = rlc.chat_id
+            GROUP BY rl.id
+            ORDER BY rl.id DESC
+        """)
+        return await cursor.fetchall()
+
+
+async def get_referral_chats(link_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT c.chat_id, c.title, c.type, c.is_bot_admin, rlc.added_at
+            FROM referral_link_chats rlc
+            JOIN chats c ON c.chat_id = rlc.chat_id
+            WHERE rlc.link_id=?
+            ORDER BY rlc.added_at DESC
+        """, (link_id,))
         return await cursor.fetchall()

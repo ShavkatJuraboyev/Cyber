@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import re
+import secrets
 from datetime import datetime, timedelta, timezone
 from html import escape
 from pathlib import Path
@@ -9,7 +10,7 @@ from pathlib import Path
 from aiogram import Router, types, F
 from aiogram.enums import ChatMemberStatus
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.filters import Command
+from aiogram.filters import Command, CommandObject
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
@@ -21,12 +22,15 @@ from database import (
     add_or_update_user,
     add_security_log,
     add_unsafe_extension,
+    create_referral_link,
     add_warning,
     add_whitelist_user,
     get_all_chats,
     get_all_users,
     get_chat_count,
     get_mute_minutes,
+    get_referral_chats,
+    get_referral_stats,
     get_security_logs,
     get_settings,
     get_user_by_id,
@@ -37,6 +41,7 @@ from database import (
     remove_bad_word,
     remove_unsafe_extension,
     remove_unsafe_all_extensions,
+    track_referral_chat,
     remove_whitelist_user,
     reset_warning,
     set_mute_minutes,
@@ -49,6 +54,8 @@ router = Router()
 
 USERS_PER_PAGE = 10
 CHATS_PER_PAGE = 10
+REF_LINKS_PER_PAGE = 10
+REF_GROUPS_PER_PAGE = 10
 
 
 class BadWordStates(StatesGroup):
@@ -81,6 +88,10 @@ class SettingStates(StatesGroup):
 
 class MediaState(StatesGroup):
     waiting_media = State()
+
+
+class ReferralStates(StatesGroup):
+    enter_name = State()
 
 
 def is_super_admin(user_id: int | None) -> bool:
@@ -120,6 +131,9 @@ def main_menu_kb() -> InlineKeyboardMarkup:
         [
             InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="users:page:0"),
             InlineKeyboardButton(text="🖼 Ommaviy xabar", callback_data="media:start"),
+        ],
+        [
+            InlineKeyboardButton(text="🔗 Giper ssilkalar", callback_data="ref:menu"),
         ],
         [
             InlineKeyboardButton(text="📄 TXT eksport", callback_data="export:txt"),
@@ -235,17 +249,28 @@ async def get_chat_link(chat: types.Chat):
 
 
 @router.message(Command("start", "panel"))
-async def start_handler(message: types.Message):
+async def start_handler(message: types.Message, command: CommandObject):
     await add_or_update_user(message.from_user)
 
     if message.chat.type in {"group", "supergroup", "channel"}:
+        try:
+            bot_member = await message.bot.get_chat_member(message.chat.id, (await message.bot.me()).id)
+            is_bot_admin = 1 if bot_member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR} else 0
+        except Exception:
+            is_bot_admin = 0
+
         await add_or_update_chat(
             message.chat.id,
             message.chat.title or "Noma’lum",
             message.chat.type,
             await get_chat_link(message.chat),
-            1 if is_super_admin(message.from_user.id) else 0
+            is_bot_admin
         )
+
+        payload = (command.args or "").strip() if command else ""
+        if payload.startswith("ref_"):
+            await track_referral_chat(payload, message.chat.id)
+
         await message.answer("✅ Xavfsizlik boti guruhda ishlayapti. Botga xabarlarni o‘chirish va foydalanuvchini cheklash huquqini bering.")
         return
 
@@ -264,6 +289,173 @@ async def start_handler(message: types.Message):
         reply_markup=public_kb(bot_username)
     )
 
+
+
+
+def referral_menu_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="➕ Yangi giper ssilka", callback_data="ref:create")],
+        [InlineKeyboardButton(text="📊 Ssilka statistikasi", callback_data="ref:list")],
+        [InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")],
+    ])
+
+
+@router.callback_query(F.data == "ref:menu")
+async def referral_menu(call: types.CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    await state.clear()
+    await call.message.edit_text(
+        "🔗 <b>Giper ssilkalar</b>\n\n"
+        "Bu yerda botni guruhlarga qo‘shish uchun cheksiz havola yaratish va har bir havola statistikalarini ko‘rish mumkin.",
+        reply_markup=referral_menu_kb()
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data == "ref:create")
+async def referral_create_start(call: types.CallbackQuery, state: FSMContext):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    await state.set_state(ReferralStates.enter_name)
+    await call.message.edit_text("Yangi ssilka nomini yuboring. Masalan: <b>Instagram reklama</b>", reply_markup=back_to_main_kb())
+    await call.answer()
+
+
+@router.message(ReferralStates.enter_name)
+async def referral_create_finish(message: types.Message, state: FSMContext):
+    if not is_super_admin(message.from_user.id):
+        return
+
+    name = (message.text or "").strip()[:100] or "Nomsiz havola"
+    code = "ref_" + secrets.token_urlsafe(6).replace("-", "_")
+    await create_referral_link(name, code, message.from_user.id)
+
+    bot_username = (await message.bot.me()).username
+    url = (
+        f"https://t.me/{bot_username}?startgroup={code}"
+        "&admin=delete_messages+restrict_members"
+    )
+
+    await message.answer(
+        "✅ <b>Yangi giper ssilka yaratildi</b>\n\n"
+        f"🏷 Nomi: <b>{escape(name)}</b>\n"
+        f"🔗 Havola:\n<code>{escape(url)}</code>\n\n"
+        "Bu havola orqali bot guruhga qo‘shilganda statistika avtomatik hisoblanadi.",
+        reply_markup=referral_menu_kb()
+    )
+    await state.clear()
+
+
+@router.callback_query(F.data.startswith("ref:list"))
+async def referral_list(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+
+    parts = call.data.split(":")
+    page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+
+    rows = await get_referral_stats()
+    total = len(rows)
+    if not rows:
+        await call.message.edit_text("🔗 Hozircha ssilka yaratilmagan.", reply_markup=referral_menu_kb())
+        return await call.answer()
+
+    max_page = max((total - 1) // REF_LINKS_PER_PAGE, 0)
+    page = max(0, min(page, max_page))
+    start = page * REF_LINKS_PER_PAGE
+    end = start + REF_LINKS_PER_PAGE
+    page_rows = rows[start:end]
+
+    bot_username = (await call.bot.me()).username
+    text = (
+        "📊 <b>Giper ssilkalar statistikasi</b>\n"
+        f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | Jami ssilkalar: <b>{total}</b>\n\n"
+    )
+    kb_rows = []
+
+    for number, (link_id, name, code, groups_count, admin_count, created_at) in enumerate(page_rows, start=start + 1):
+        url = f"https://t.me/{bot_username}?startgroup={code}&admin=delete_messages+restrict_members"
+        text += (
+            f"{number}. 🔹 <b>{escape(name)}</b>\n"
+            f"👥 Qo‘shilgan guruhlar: <b>{groups_count}</b>\n"
+            f"🛡 Admin qilinganlar: <b>{admin_count}</b>\n"
+            f"🔗 <code>{escape(url)}</code>\n\n"
+        )
+        kb_rows.append([InlineKeyboardButton(
+            text=f"📄 {number}. {name[:30]} ({groups_count})",
+            callback_data=f"ref:detail:{link_id}:0:{page}"
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"ref:list:{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"ref:list:{page + 1}"))
+    if nav:
+        kb_rows.append(nav)
+
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")])
+    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ref:detail:"))
+async def referral_detail(call: types.CallbackQuery):
+    if not is_super_admin(call.from_user.id):
+        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+
+    parts = call.data.split(":")
+    link_id = int(parts[2])
+    page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    back_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+
+    stats_rows = await get_referral_stats()
+    current_link = next((row for row in stats_rows if row[0] == link_id), None)
+    chats = await get_referral_chats(link_id)
+    total = len(chats)
+
+    max_page = max((total - 1) // REF_GROUPS_PER_PAGE, 0)
+    page = max(0, min(page, max_page))
+    start = page * REF_GROUPS_PER_PAGE
+    end = start + REF_GROUPS_PER_PAGE
+    page_chats = chats[start:end]
+
+    if current_link:
+        _, link_name, _, groups_count, admin_count, _ = current_link
+        text = (
+            f"📄 <b>{escape(link_name)}</b> orqali qo‘shilgan guruhlar\n"
+            f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | "
+            f"Jami: <b>{groups_count}</b> | Admin: <b>{admin_count}</b>\n\n"
+        )
+    else:
+        text = "📄 <b>Ssilka orqali qo‘shilgan guruhlar</b>\n\n"
+
+    if not chats:
+        text += "Bu ssilka orqali hali guruh qo‘shilmagan."
+    else:
+        for number, (chat_id, title, chat_type, is_admin, added_at) in enumerate(page_chats, start=start + 1):
+            status = "🛡 admin" if is_admin else "⚠️ admin emas"
+            text += (
+                f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
+                f"ID: <code>{chat_id}</code> | {status}\n\n"
+
+            )
+
+    kb_rows = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"ref:detail:{link_id}:{page - 1}:{back_page}"))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"ref:detail:{link_id}:{page + 1}:{back_page}"))
+    if nav:
+        kb_rows.append(nav)
+
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
+    kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
+
+    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.answer()
 
 @router.callback_query(F.data == "help_info")
 async def show_help(call: types.CallbackQuery):
@@ -319,7 +511,7 @@ async def statistics_handler(call: types.CallbackQuery):
         return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
     chats = await get_all_chats()
     users = await get_all_users()
-    bot_admin_chats = sum(1 for c in chats if c[3] == 1)
+    bot_admin_chats = sum(1 for c in chats if c[4] == 1)
     text = (
         "📊 <b>Statistika</b>\n\n"
         f"👥 Guruh/kanallar: <b>{len(chats)}</b>\n"
