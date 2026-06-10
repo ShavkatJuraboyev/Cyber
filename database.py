@@ -434,22 +434,45 @@ async def list_bad_words(chat_id: int | None = None):
         return [r[0] for r in rows]
 
 
+async def _settings_row_to_dict(row):
+    return {
+        "mute_minutes": row[0],
+        "max_warnings": row[1],
+        "max_file_mb": row[2],
+        "delete_service_messages": bool(row[3]),
+        "block_archives": bool(row[4]),
+    }
+
+
+async def get_global_settings():
+    """chat_id=0 umumiy sozlamalar sifatida ishlatiladi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO settings (chat_id) VALUES (0)")
+        await db.commit()
+        cursor = await db.execute("""
+            SELECT mute_minutes, max_warnings, max_file_mb, delete_service_messages, block_archives
+            FROM settings WHERE chat_id=0
+        """)
+        row = await cursor.fetchone()
+        return await _settings_row_to_dict(row)
+
+
 async def get_settings(chat_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
-        await db.execute("INSERT OR IGNORE INTO settings (chat_id) VALUES (?)", (chat_id,))
+        # Yangi guruhlar uchun default qiymatlar umumiy sozlamadan olinadi.
+        await db.execute("INSERT OR IGNORE INTO settings (chat_id) VALUES (0)")
+        await db.execute("""
+            INSERT OR IGNORE INTO settings (chat_id, mute_minutes, max_warnings, max_file_mb, delete_service_messages, block_archives)
+            SELECT ?, mute_minutes, max_warnings, max_file_mb, delete_service_messages, block_archives
+            FROM settings WHERE chat_id=0
+        """, (chat_id,))
         await db.commit()
         cursor = await db.execute("""
             SELECT mute_minutes, max_warnings, max_file_mb, delete_service_messages, block_archives
             FROM settings WHERE chat_id=?
         """, (chat_id,))
         row = await cursor.fetchone()
-        return {
-            "mute_minutes": row[0],
-            "max_warnings": row[1],
-            "max_file_mb": row[2],
-            "delete_service_messages": bool(row[3]),
-            "block_archives": bool(row[4]),
-        }
+        return await _settings_row_to_dict(row)
 
 
 async def get_mute_minutes(chat_id: int | None) -> int:
@@ -479,6 +502,35 @@ async def update_setting(chat_id: int, key: str, value: int):
         await db.execute("INSERT OR IGNORE INTO settings (chat_id) VALUES (?)", (chat_id,))
         await db.execute(f"UPDATE settings SET {key}=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=?", (value, chat_id))
         await db.commit()
+
+
+async def update_setting_for_all_chats(key: str, value: int) -> int:
+    """Umumiy defaultni va bazadagi barcha guruh/kanal sozlamalarini yangilaydi."""
+    allowed = {"mute_minutes", "max_warnings", "max_file_mb", "delete_service_messages", "block_archives"}
+    if key not in allowed:
+        raise ValueError("Noto‘g‘ri sozlama nomi")
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("INSERT OR IGNORE INTO settings (chat_id) VALUES (0)")
+        cursor = await db.execute("SELECT chat_id FROM chats")
+        chat_ids = [row[0] for row in await cursor.fetchall()]
+
+        for cid in chat_ids:
+            await db.execute("""
+                INSERT OR IGNORE INTO settings (chat_id, mute_minutes, max_warnings, max_file_mb, delete_service_messages, block_archives)
+                SELECT ?, mute_minutes, max_warnings, max_file_mb, delete_service_messages, block_archives
+                FROM settings WHERE chat_id=0
+            """, (cid,))
+
+        await db.execute(f"UPDATE settings SET {key}=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=0", (value,))
+        if chat_ids:
+            placeholders = ",".join("?" for _ in chat_ids)
+            await db.execute(
+                f"UPDATE settings SET {key}=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id IN ({placeholders})",
+                (value, *chat_ids),
+            )
+        await db.commit()
+        return len(chat_ids)
 
 
 async def add_whitelist_user(chat_id: int, user_id: int):

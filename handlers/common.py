@@ -58,6 +58,7 @@ from database import (
     assign_chat_to_referral,
     get_security_logs,
     get_settings,
+    get_global_settings,
     get_user_by_id,
     is_whitelisted,
     list_bad_words,
@@ -74,6 +75,7 @@ from database import (
     set_mute_minutes,
     update_chat_bot_status,
     update_setting,
+    update_setting_for_all_chats,
     set_panel_admin_expiry,
     disable_expired_panel_admins,
     add_admin_audit_log,
@@ -454,10 +456,13 @@ async def choose_chat_keyboard(prefix: str, page: int = 0) -> InlineKeyboardMark
     chats = await get_all_chats()
     start = page * CHATS_PER_PAGE
     end = start + CHATS_PER_PAGE
-    rows = [
+    rows = []
+    if prefix == "setting" and page == 0:
+        rows.append([InlineKeyboardButton(text="🌐 Barcha guruh/kanallar uchun", callback_data=f"{prefix}:all")])
+    rows.extend(
         [InlineKeyboardButton(text=(title or str(chat_id))[:60], callback_data=f"{prefix}:chat:{chat_id}")]
         for chat_id, title, *_ in chats[start:end]
-    ]
+    )
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"{prefix}:page:{page-1}"))

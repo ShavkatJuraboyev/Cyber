@@ -815,6 +815,30 @@ async def setting_page(call: types.CallbackQuery):
     await call.answer()
 
 
+@router.callback_query(F.data == "setting:all", SettingStates.choose_chat)
+async def setting_all_selected(call: types.CallbackQuery, state: FSMContext):
+    if await deny_if_no_permission(call, "settings.update"):
+        return
+    data = await state.get_data()
+    key = data["setting_key"]
+    await state.update_data(chat_id="all")
+    settings = await get_global_settings()
+    labels = {
+        "mute_minutes": "Mute vaqti daqiqada",
+        "max_warnings": "Ogohlantirish limiti",
+        "max_file_mb": "Maksimal fayl hajmi MB",
+        "block_archives": "Arxivlarni bloklash: 1 = ha, 0 = yo‘q",
+    }
+    await state.set_state(SettingStates.enter_value)
+    await call.message.edit_text(
+        f"🌐 <b>Barcha guruh/kanallar uchun</b>\n"
+        f"Joriy umumiy qiymat: <code>{settings[key]}</code>\n\n"
+        f"{labels[key]} uchun yangi qiymat yuboring. Bu qiymat bazadagi barcha guruhlarga va keyin qo‘shiladigan yangi guruhlarga ham qo‘llanadi.",
+        reply_markup=back_to_settings_kb()
+    )
+    await call.answer()
+
+
 @router.callback_query(F.data.startswith("setting:chat:"), SettingStates.choose_chat)
 async def setting_chat_selected(call: types.CallbackQuery, state: FSMContext):
     if await deny_if_no_permission(call, "settings.update"):
@@ -844,7 +868,7 @@ async def setting_save(message: types.Message, state: FSMContext):
         return
     data = await state.get_data()
     key = data.get("setting_key")
-    chat_id = int(data.get("chat_id"))
+    chat_target = data.get("chat_id")
     value = int(message.text)
     ranges = {
         "mute_minutes": (1, 4320),
@@ -855,8 +879,18 @@ async def setting_save(message: types.Message, state: FSMContext):
     lo, hi = ranges[key]
     if not lo <= value <= hi:
         return await message.answer(f"❗ Qiymat {lo}–{hi} oralig‘ida bo‘lishi kerak.")
-    await update_setting(chat_id, key, value)
-    await message.answer("✅ Sozlama saqlandi.", reply_markup=back_to_main_kb())
+    if chat_target == "all":
+        changed_count = await update_setting_for_all_chats(key, value)
+        await message.answer(
+            f"✅ Umumiy sozlama saqlandi.\n"
+            f"🌐 Bazadagi <b>{changed_count}</b> ta guruh/kanalga qo‘llandi.\n"
+            "Keyin qo‘shiladigan guruh/kanallar ham shu qiymatni oladi.",
+            reply_markup=back_to_main_kb()
+        )
+    else:
+        chat_id = int(chat_target)
+        await update_setting(chat_id, key, value)
+        await message.answer("✅ Sozlama saqlandi.", reply_markup=back_to_main_kb())
     await state.clear()
 
 
