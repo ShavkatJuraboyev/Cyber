@@ -43,6 +43,11 @@ async def init_db():
                 "ALTER TABLE chats ADD COLUMN bot_status TEXT DEFAULT 'unknown'"
             )
 
+        if "updated_at" not in column_names:
+            await db.execute(
+                "ALTER TABLE chats ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            )
+
         await db.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
@@ -75,6 +80,18 @@ async def init_db():
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
+
+        # Eski bazalarda settings jadvalida yangi ustunlar bo'lmasligi mumkin.
+        cursor = await db.execute("PRAGMA table_info(settings)")
+        settings_columns = [column[1] for column in await cursor.fetchall()]
+        if "max_file_mb" not in settings_columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN max_file_mb INTEGER DEFAULT 20")
+        if "delete_service_messages" not in settings_columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN delete_service_messages INTEGER DEFAULT 0")
+        if "block_archives" not in settings_columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN block_archives INTEGER DEFAULT 0")
+        if "updated_at" not in settings_columns:
+            await db.execute("ALTER TABLE settings ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS whitelist (

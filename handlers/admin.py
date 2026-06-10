@@ -130,7 +130,7 @@ async def referral_list(call: types.CallbackQuery):
         kb_rows.append(nav)
 
     kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")])
-    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -198,7 +198,7 @@ async def referral_detail(call: types.CallbackQuery):
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
-    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -335,7 +335,7 @@ async def referral_unlinked_chats(call: types.CallbackQuery):
         kb_rows.append(nav)
     kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")])
 
-    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -478,7 +478,7 @@ async def chats_page_handler(call: types.CallbackQuery):
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data="stats")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
-    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -558,7 +558,7 @@ async def logs_handler(call: types.CallbackQuery):
                 f"  Chat: <code>{chat_id}</code> | User: <code>{user_id}</code>\n"
                 f"  Fayl: {escape(file_name or '—')} | {created_at}\n\n"
             )
-    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
+    await call.message.edit_text(text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -685,7 +685,7 @@ async def list_words(call: types.CallbackQuery):
     words = await list_bad_words(chat_id)
     title = "Global yomon so‘zlar" if chat_id is None else "Ushbu chatdagi yomon so‘zlar"
     text = f"📃 <b>{title}</b>\n\n" + ("\n".join(f"• {escape(w)}" for w in words) if words else "Ro‘yxat bo‘sh.")
-    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
+    await call.message.edit_text(text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -770,7 +770,7 @@ async def ext_list(call: types.CallbackQuery):
         return
     exts = await list_unsafe_extensions(None)
     text = "🦠 <b>Xavfli kengaytmalar</b>\n\n" + ("\n".join(f"• <code>{escape(e)}</code>" for e in exts) if exts else "Ro‘yxat bo‘sh.")
-    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
+    await call.message.edit_text(text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -988,7 +988,7 @@ async def wh_list_all(call: types.CallbackQuery):
         text += "\n".join(f"   • <code>{u}</code>" for u in users) + "\n\n"
     if not found:
         text += "Hozircha ruxsatli foydalanuvchi yo‘q."
-    await call.message.edit_text(text[:3900], reply_markup=back_to_main_kb())
+    await call.message.edit_text(text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
