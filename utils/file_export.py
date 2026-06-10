@@ -1,6 +1,7 @@
 from reportlab.platypus import SimpleDocTemplate, Paragraph
 from reportlab.lib.styles import getSampleStyleSheet
 from xml.sax.saxutils import escape as xml_escape
+from utils.timezone import format_samarkand
 
 def export_chats_to_txt(chats, filename="chats.txt"):
     with open(filename, "w", encoding="utf-8") as f:
@@ -43,7 +44,7 @@ def export_referral_chats_to_txt(link_name, public_url, chats, filename="referra
             f.write(f"   ID: {chat_id}\n")
             f.write(f"   Turi: {chat_type}\n")
             f.write(f"   Status: {bot_status} | Admin: {bool(is_admin)}\n")
-            f.write(f"   Qo‘shilgan: {added_at}\n")
+            f.write(f"   Qo‘shilgan: {format_samarkand(added_at)}\n")
             if added_by:
                 f.write(f"   Kim qo‘shgan: {added_by}\n")
             f.write("\n")
@@ -69,7 +70,7 @@ def export_referral_chats_to_pdf(link_name, public_url, chats, filename="referra
             text = (
                 f"<b>{i}. {xml_escape(str(title or chat_id))}</b><br/>"
                 f"ID: {chat_id} | Turi: {xml_escape(str(chat_type))} | Status: {xml_escape(str(bot_status))} | Admin: {bool(is_admin)}<br/>"
-                f"Qo‘shilgan: {xml_escape(str(added_at))}{xml_escape(str(added_by_text))}"
+                f"Qo‘shilgan: {xml_escape(format_samarkand(added_at))}{xml_escape(str(added_by_text))}"
             )
             story.append(Paragraph(text, styles["Normal"]))
             story.append(Paragraph("<br/>", styles["Normal"]))

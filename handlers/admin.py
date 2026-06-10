@@ -1,4 +1,5 @@
 from .common import *
+from utils.timezone import format_samarkand
 
 router = Router()
 
@@ -190,7 +191,7 @@ async def referral_detail(call: types.CallbackQuery):
             text += (
                 f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
                 f"   ID: <code>{chat_id}</code> | {status}\n"
-                f"   Qo‘shilgan: <code>{escape(str(added_at))}</code>{added_by_text}\n\n"
+                f"   Qo‘shilgan: <code>{escape(format_samarkand(added_at))}</code>{added_by_text}\n\n"
             )
 
     kb_rows = []
@@ -612,7 +613,7 @@ async def logs_handler(call: types.CallbackQuery):
             text += (
                 f"• <b>{escape(action)}</b> — {escape(reason or '—')}\n"
                 f"  Chat: <code>{chat_id}</code> | User: <code>{user_id}</code>\n"
-                f"  Fayl: {escape(file_name or '—')} | {created_at}\n\n"
+                f"  Fayl: {escape(file_name or '—')} | {format_samarkand(created_at)}\n\n"
             )
     await safe_edit_text(call.message, text, reply_markup=back_to_main_kb())
     await call.answer()

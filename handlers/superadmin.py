@@ -1,4 +1,5 @@
 from .common import *
+from utils.timezone import format_samarkand
 
 router = Router()
 
@@ -430,7 +431,7 @@ async def panel_admin_audit(call: types.CallbackQuery):
         text += "Hozircha yozuv yo‘q."
     else:
         for actor_id, target_user_id, action, details, created_at in rows:
-            text += f"• <b>{escape(action)}</b> | actor: <code>{actor_id}</code> | target: <code>{target_user_id}</code>\n  {escape(details or '—')} | <code>{created_at}</code>\n\n"
+            text += f"• <b>{escape(action)}</b> | actor: <code>{actor_id}</code> | target: <code>{target_user_id}</code>\n  {escape(details or '—')} | <code>{format_samarkand(created_at)}</code>\n\n"
     await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Adminlar", callback_data="pa:menu")]]))
     await call.answer()
 

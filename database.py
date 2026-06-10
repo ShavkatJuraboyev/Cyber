@@ -1,6 +1,7 @@
 import aiosqlite
 import logging
 from datetime import datetime, timedelta
+from utils.timezone import now_samarkand_str, now_samarkand
 from config import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -839,7 +840,7 @@ async def assign_chat_to_referral(link_id: int, chat_id: int) -> bool:
 async def add_panel_admin(user_id: int, full_name: str = "", username: str = "", created_by: int | None = None, expires_days: int | None = None):
     expires_at = None
     if expires_days and int(expires_days) > 0:
-        expires_at = (datetime.now() + timedelta(days=int(expires_days))).strftime("%Y-%m-%d %H:%M:%S")
+        expires_at = (now_samarkand() + timedelta(days=int(expires_days))).strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("""
         INSERT INTO panel_admins (user_id, full_name, username, is_active, created_by, expires_at)
@@ -1047,7 +1048,7 @@ async def panel_admin_has_effective_permission(user_id: int, permission: str) ->
 async def set_panel_admin_expiry(user_id: int, expires_days: int | None):
     expires_at = None
     if expires_days and int(expires_days) > 0:
-        expires_at = (datetime.now() + timedelta(days=int(expires_days))).strftime("%Y-%m-%d %H:%M:%S")
+        expires_at = (now_samarkand() + timedelta(days=int(expires_days))).strftime("%Y-%m-%d %H:%M:%S")
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("UPDATE panel_admins SET expires_at=?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?", (expires_at, user_id))
         await db.commit()
@@ -1058,8 +1059,8 @@ async def disable_expired_panel_admins() -> int:
         cur = await db.execute("""
             UPDATE panel_admins
             SET is_active=0, updated_at=CURRENT_TIMESTAMP
-            WHERE is_active=1 AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime('now')
-        """)
+            WHERE is_active=1 AND expires_at IS NOT NULL AND datetime(expires_at) <= datetime(?)
+        """, (now_samarkand_str(),))
         await db.commit()
         return cur.rowcount
 
