@@ -3,36 +3,38 @@ from urllib.parse import quote
 
 router = Router()
 
-ADD_RIGHTS = "delete_messages+restrict_members+invite_users+pin_messages"
+# Ichki texnik parametr. Foydalanuvchiga bu matn ko‘rsatilmaydi.
+ADD_RIGHTS = "delete_messages+restrict_members"
+
+
+GROUP_WELCOME_TEXT = (
+    "✅ <b>Bot guruhga muvaffaqiyatli qo‘shildi!</b>\n\n"
+    "Endi bot guruhdagi shubhali fayllar, zararli havolalar va qoida buzilishlarini "
+    "aniqlashga yordam beradi.\n\n"
+    "Bot to‘liq ishlashi uchun uni guruh sozlamalarida administrator qiling."
+)
 
 
 def add_group_url(bot_username: str, ref_code: str | None = None) -> str:
-    """Botni guruh/superguruhga admin qilib qo‘shish uchun direct deep-link."""
+    """Botni guruhga qo‘shish havolasi."""
     payload = ref_code or "new"
     return f"https://t.me/{bot_username}?startgroup={payload}&admin={ADD_RIGHTS}"
-
-
-def add_channel_url(bot_username: str, ref_code: str | None = None) -> str:
-    """Botni kanalga admin qilib qo‘shish uchun direct deep-link."""
-    payload = ref_code or "new"
-    return f"https://t.me/{bot_username}?startchannel={payload}&admin={ADD_RIGHTS}"
 
 
 def referral_share_url(bot_username: str, ref_code: str | None = None) -> str | None:
     if not ref_code:
         return None
     public_url = f"https://t.me/{bot_username}?start={ref_code}"
-    text = "Botni guruhga admin qilib qo‘shish uchun shu havolani bosing."
+    text = "Guruh xavfsizligi uchun botni qo‘shib ko‘ring."
     return f"https://t.me/share/url?url={quote(public_url)}&text={quote(text)}"
 
 
 def public_home_kb(bot_username: str, ref_code: str | None = None) -> InlineKeyboardMarkup:
     rows = [
         [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username, ref_code))],
-        [InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=add_channel_url(bot_username, ref_code))],
         [
-            InlineKeyboardButton(text="📖 To‘liq qo‘llanma", callback_data="pub:guide"),
-            InlineKeyboardButton(text="🧪 Demo", callback_data="pub:demo"),
+            InlineKeyboardButton(text="📖 Qo‘llanma", callback_data="pub:guide"),
+            InlineKeyboardButton(text="🧪 Misollar", callback_data="pub:demo"),
         ],
         [
             InlineKeyboardButton(text="🛡 Xavfsizlik testi", callback_data="quiz:start"),
@@ -45,7 +47,7 @@ def public_home_kb(bot_username: str, ref_code: str | None = None) -> InlineKeyb
     ]
     share_url = referral_share_url(bot_username, ref_code)
     if share_url:
-        rows.insert(2, [InlineKeyboardButton(text="🔗 Shu ssilkani ulashish", url=share_url)])
+        rows.insert(1, [InlineKeyboardButton(text="🔗 Havolani ulashish", url=share_url)])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -55,72 +57,125 @@ def public_back_kb(bot_username: str, back: str = "pub:home", ref_code: str | No
         rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=back)])
     rows.append([InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")])
     rows.append([InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username, ref_code))])
-    rows.append([InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=add_channel_url(bot_username, ref_code))])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def guide_menu_kb(bot_username: str, ref_code: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1️⃣ Botni qo‘shish", callback_data="guide:add")],
-        [InlineKeyboardButton(text="2️⃣ Admin huquqlari", callback_data="guide:rights")],
-        [InlineKeyboardButton(text="3️⃣ Panel sozlamalari", callback_data="guide:panel")],
-        [InlineKeyboardButton(text="4️⃣ Xavfli fayllar", callback_data="guide:files")],
-        [InlineKeyboardButton(text="5️⃣ Tekshirish", callback_data="guide:test")],
+        [InlineKeyboardButton(text="1️⃣ Botni guruhga qo‘shish", callback_data="guide:add")],
+        [InlineKeyboardButton(text="2️⃣ Guruhni xavfsiz qilish", callback_data="guide:safe")],
+        [InlineKeyboardButton(text="3️⃣ Shubhali narsalardan ehtiyot bo‘lish", callback_data="guide:careful")],
         [InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")],
         [InlineKeyboardButton(text="➕ Hozir guruhga qo‘shish", url=add_group_url(bot_username, ref_code))],
-        [InlineKeyboardButton(text="📢 Hozir kanalga qo‘shish", url=add_channel_url(bot_username, ref_code))],
     ])
 
 
 def demo_menu_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🦠 Zararli fayl misoli", callback_data="demo:file")],
-        [InlineKeyboardButton(text="🚫 Yomon so‘z nazorati", callback_data="demo:word")],
-        [InlineKeyboardButton(text="🔇 Ogohlantirish va mute", callback_data="demo:mute")],
-        [InlineKeyboardButton(text="🔐 Maxfiy guruh logi", callback_data="demo:secret")],
-        [InlineKeyboardButton(text="👮 Admin huquqlari", callback_data="demo:admin")],
+        [InlineKeyboardButton(text="🦠 Shubhali fayl misoli", callback_data="demo:file")],
+        [InlineKeyboardButton(text="🚫 Nomaqbul so‘zlar nazorati", callback_data="demo:word")],
+        [InlineKeyboardButton(text="⚠️ Ogohlantirish misoli", callback_data="demo:warn")],
         [InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")],
     ])
 
 
 FAQ_ITEMS = [
     (
-        "Bot guruhda ishlashi uchun nima kerak?",
-        "Bot guruhga qo‘shilgan va <b>admin</b> qilingan bo‘lishi kerak. Eng kerakli huquqlar: <b>Delete messages</b> va <b>Restrict members</b>. Delete messages bo‘lmasa zararli faylni ko‘radi, lekin o‘chira olmaydi. Restrict members bo‘lmasa qoidabuzarni mute qila olmaydi.",
+        "Bot guruhda ishlashi uchun nima qilish kerak?",
+        "Botni guruhga qo‘shing va guruh sozlamalarida administrator qiling. Shundan so‘ng bot guruh xavfsizligini kuzatishga yordam beradi.",
     ),
     (
-        ".apk, .exe, .bat fayllar qanday bloklanadi?",
-        "Superadmin paneldan <b>Xavfli fayllar</b> bo‘limiga kirib kengaytmalarni qo‘shadi: <code>.apk</code>, <code>.exe</code>, <code>.bat</code>, <code>.js</code>. Shundan keyin guruhga shu kengaytmadagi fayl tashlansa, bot uni o‘chiradi va logga yozadi.",
+        "Bot qanday himoya qiladi?",
+        "Bot shubhali fayllar, nomaqbul so‘zlar, xavfli ko‘rinadigan xabarlar va firibgarlik urinishlarini kamaytirishga yordam beradi.",
     ),
     (
-        "photo.jpg.apk nima uchun xavfli?",
-        "Bu ikki martalik kengaytma. Foydalanuvchiga rasmdek ko‘rinishi mumkin, lekin aslida APK fayl bo‘lishi mumkin. Bot bunday nomlarni ham aniqlaydi va bloklaydi.",
+        ".apk, .exe va .bat fayllar nima uchun xavfli?",
+        "Bunday fayllar qurilmada dastur ishga tushirishi mumkin. Manbasi ishonchli bo‘lmasa, ularni yuklab olish yoki ochish tavsiya etilmaydi.",
     ),
     (
-        "Maxfiy guruh nima qiladi?",
-        "Maxfiy guruh superadminlar uchun nazorat joyi. Zararli fayl ushlansa, bot faylni yoki fayl ma’lumotini maxfiy guruhga yuboradi: kim tashladi, qaysi guruhdan, fayl nomi, sabab va vaqt.",
+        "photo.jpg.apk nima uchun shubhali?",
+        "Bu fayl nomi rasmga o‘xshab ko‘rinishi mumkin, lekin oxiridagi .apk uning dastur fayli bo‘lishi mumkinligini bildiradi.",
     ),
     (
-        "Maxfiy guruhni qanday ulayman?",
-        "Botni maxfiy guruhga admin qiling. Keyin superadmin o‘sha guruh ichida <code>/set_secret_group</code> buyrug‘ini yuboradi. Shundan keyin zararli fayl loglari shu guruhga boradi.",
+        "Noma’lum havolani ochish xavfsizmi?",
+        "Yo‘q. Avval havolaning manbasini tekshiring. Shubhali havolalar soxta sayt, firibgarlik yoki zararli sahifaga olib borishi mumkin.",
     ),
     (
-        "Adminlarga faqat ko‘rish huquqi bersam nima bo‘ladi?",
-        "<b>read</b> faqat ko‘rish uchun. Yangi qo‘shish uchun <b>create</b>, tahrirlash uchun <b>update</b>, o‘chirish uchun <b>delete</b>, maxsus amal uchun <b>action</b> kerak.",
+        "Kuchli parol qanday bo‘lishi kerak?",
+        "Kuchli parol katta va kichik harflar, raqamlar hamda maxsus belgilar aralashmasidan iborat bo‘lgani yaxshi.",
     ),
     (
-        "Bot oddiy foydalanuvchilar uchun nimaga kerak?",
-        "Oddiy foydalanuvchi botni guruhga qo‘shishi, qo‘llanma o‘qishi, demo ko‘rishi, FAQdan javob olishi va xavfsizlik testidan o‘tishi mumkin.",
+        "Ikki bosqichli himoya nima uchun kerak?",
+        "Ikki bosqichli himoya akkauntingizga qo‘shimcha xavfsizlik beradi. Parolingiz bilinib qolsa ham, begona odam kirishi qiyinlashadi.",
+    ),
+    (
+        "Bot foydalanuvchilar uchun nimaga kerak?",
+        "Bot orqali xavfsizlik bo‘yicha qo‘llanma o‘qish, misollarni ko‘rish va qisqa test orqali bilimni tekshirish mumkin.",
     ),
 ]
 
+
 QUIZ = [
-    {"q": "Sizga noma’lum odam <code>premium.apk</code> yubordi. Nima qilasiz?", "options": ["O‘rnataman", "Avval manbasini tekshiraman, kerak bo‘lmasa ochmayman", "Do‘stlarga ham yuboraman"], "correct": 1, "info": "To‘g‘ri. Noma’lum APK fayllar zararli bo‘lishi mumkin. Manba ishonchli bo‘lmasa ochmang."},
-    {"q": "<code>photo.jpg.apk</code> fayli nimani bildirishi mumkin?", "options": ["Oddiy rasm", "Ikki martalik kengaytma orqali yashirilgan APK", "Telegram sticker"], "correct": 1, "info": "To‘g‘ri. Bu rasmdek ko‘rsatishga urinish bo‘lishi mumkin, lekin fayl APK."},
-    {"q": "Bot zararli faylni o‘chira olishi uchun qaysi huquq kerak?", "options": ["Delete messages", "Change group info", "Add new admins"], "correct": 0, "info": "To‘g‘ri. Fayl/xabarni o‘chirish uchun Delete messages huquqi kerak."},
-    {"q": "Admin faqat read olsa, yangi kengaytma qo‘sha oladimi?", "options": ["Ha", "Yo‘q, create kerak", "Faqat yakshanba kuni"], "correct": 1, "info": "To‘g‘ri. read faqat ko‘rish; qo‘shish uchun create kerak."},
-    {"q": "Maxfiy guruhga log borishi uchun nima qilish kerak?", "options": ["Botga /start bosish", "Botni maxfiy guruhga admin qilib /set_secret_group yuborish", "Faqat kanal ochish"], "correct": 1, "info": "To‘g‘ri. Superadmin maxfiy guruhda /set_secret_group yuboradi."},
-    {"q": "Qarz so‘ragan akkauntga darhol pul yuborish xavfsizmi?", "options": ["Ha", "Yo‘q, avval telefon orqali shaxsini tasdiqlash kerak", "Faqat kechasi"], "correct": 1, "info": "To‘g‘ri. Akkaunt o‘g‘irlangan bo‘lishi mumkin; avval egasi bilan bog‘laning."},
+    {
+        "q": "Sizga noma’lum odam <code>premium.apk</code> yubordi. Nima qilasiz?",
+        "options": ["O‘rnataman", "Avval manbasini tekshiraman, kerak bo‘lmasa ochmayman", "Do‘stlarga ham yuboraman"],
+        "correct": 1,
+        "info": "To‘g‘ri. Noma’lum APK fayllar zararli bo‘lishi mumkin. Manba ishonchli bo‘lmasa ochmang.",
+    },
+    {
+        "q": "<code>photo.jpg.apk</code> fayli nimani bildirishi mumkin?",
+        "options": ["Oddiy rasm", "Rasmga o‘xshatib yashirilgan dastur fayli", "Telegram sticker"],
+        "correct": 1,
+        "info": "To‘g‘ri. Fayl nomi rasmga o‘xshasa ham, oxiridagi .apk uning dastur fayli bo‘lishi mumkinligini bildiradi.",
+    },
+    {
+        "q": "Qarz so‘ragan akkauntga darhol pul yuborish xavfsizmi?",
+        "options": ["Ha", "Yo‘q, avval telefon orqali shaxsini tasdiqlash kerak", "Faqat kechasi"],
+        "correct": 1,
+        "info": "To‘g‘ri. Akkaunt o‘g‘irlangan bo‘lishi mumkin; avval egasi bilan bog‘laning.",
+    },
+    {
+        "q": "Notanish havolani bosishdan oldin nima qilish kerak?",
+        "options": ["Darhol ochish", "Havola manzilini va kim yuborganini tekshirish", "Barchaga yuborish"],
+        "correct": 1,
+        "info": "To‘g‘ri. Shubhali havolalar firibgarlik yoki zararli saytga olib borishi mumkin.",
+    },
+    {
+        "q": "Kuchli parol qanday bo‘lishi kerak?",
+        "options": ["12345678", "Tug‘ilgan sana", "Harflar, raqamlar va belgilar aralashmasi"],
+        "correct": 2,
+        "info": "To‘g‘ri. Kuchli parol turli belgilar kombinatsiyasidan iborat bo‘ladi.",
+    },
+    {
+        "q": "Bir xil parolni barcha akkauntlarda ishlatish xavfsizmi?",
+        "options": ["Ha", "Yo‘q", "Faqat Telegram uchun mumkin"],
+        "correct": 1,
+        "info": "To‘g‘ri. Bitta akkaunt buzilsa, qolgan akkauntlar ham xavf ostida qoladi.",
+    },
+    {
+        "q": "Ikki bosqichli himoya nima uchun kerak?",
+        "options": ["Internetni tezlashtirish uchun", "Akkaunt xavfsizligini oshirish uchun", "Rasm yuborish uchun"],
+        "correct": 1,
+        "info": "To‘g‘ri. Ikki bosqichli himoya akkauntga qo‘shimcha himoya qatlamini qo‘shadi.",
+    },
+    {
+        "q": "Bank kartangiz ma’lumotlarini begona odamga yuborish xavfsizmi?",
+        "options": ["Ha", "Yo‘q", "Faqat Telegramda mumkin"],
+        "correct": 1,
+        "info": "To‘g‘ri. Karta ma’lumotlarini hech kimga yubormang.",
+    },
+    {
+        "q": "Telegramdan “sovrin yutdingiz” degan shubhali xabar kelsa nima qilasiz?",
+        "options": ["Havolani bosaman", "Shaxsiy ma’lumotlarni yuboraman", "Xabarni tekshiraman va shubhali bo‘lsa e’tibor bermayman"],
+        "correct": 2,
+        "info": "To‘g‘ri. Firibgarlar ko‘pincha soxta sovrinlar orqali odamlarni aldashadi.",
+    },
+    {
+        "q": "Begona odam kod yoki SMS raqam so‘rasa nima qilish kerak?",
+        "options": ["Yuboraman", "Hech kimga bermayman", "Guruhga tashlayman"],
+        "correct": 1,
+        "info": "To‘g‘ri. Tasdiqlash kodlari shaxsiy hisobingizga kirish uchun ishlatiladi. Ularni hech kimga bermang.",
+    },
 ]
 
 
@@ -128,8 +183,6 @@ async def send_public_home(message_or_call, ref_code: str | None = None):
     bot = message_or_call.bot
     bot_username = (await bot.me()).username
 
-    # Referral linkdan kirgan foydalanuvchi menyuda yurib qolsa ham,
-    # keyingi “Guruhga qo‘shish” tugmalarida aynan o‘sha ref_code saqlanadi.
     user_id = None
     if isinstance(message_or_call, types.CallbackQuery) and message_or_call.from_user:
         user_id = message_or_call.from_user.id
@@ -139,22 +192,20 @@ async def send_public_home(message_or_call, ref_code: str | None = None):
         ref_code = await get_user_referral_click(user_id)
 
     text = (
-        "👋 <b>Salom! Men guruhingizni himoya qiluvchi xavfsizlik botiman.</b>\n\n"
-        "Men guruhlarda spam, yomon so‘zlar, shubhali fayllar va firibgarlik urinishlarini kamaytirishga yordam beraman.\n\n"
-        "🛡 <b>Asosiy imkoniyatlar:</b>\n"
-        "• <code>.apk</code>, <code>.exe</code>, <code>.bat</code>, <code>.js</code> kabi xavfli fayllarni bloklash;\n"
-        "• <code>photo.jpg.apk</code> kabi yashirin kengaytmalarni aniqlash;\n"
-        "• yomon so‘zlarni o‘chirish;\n"
-        "• ogohlantirish va avtomatik mute;\n"
-        "• superadmin uchun maxfiy log guruhi;\n"
-        "• adminlarga aniq CRUD huquqlar berish.\n\n"
+        "👋 <b>Salom! Men guruh xavfsizligi uchun yordamchi botman.</b>\n\n"
+        "Men guruhlarda shubhali fayllar, nomaqbul so‘zlar va firibgarlik urinishlarini kamaytirishga yordam beraman.\n\n"
+        "🛡 <b>Nimalarga yordam beraman?</b>\n"
+        "• shubhali fayllarni aniqlash;\n"
+        "• ikki martalik fayl nomlarini sezish, masalan <code>photo.jpg.apk</code>;\n"
+        "• nomaqbul so‘zlarni nazorat qilish;\n"
+        "• guruh a’zolarini xavfsizlik bo‘yicha ogohlantirish;\n"
+        "• foydalanuvchilarga qisqa qo‘llanma va testlar berish.\n\n"
         "Boshlash uchun quyidagi tugmalardan foydalaning 👇"
     )
     if ref_code:
         text += (
-            "\n\n🔗 <b>Ssilka saqlandi.</b> Endi pastdagi <b>Guruhga qo‘shish</b> tugmasi orqali "
-            "botni guruhingizga admin qilib qo‘shing. Xuddi shu ssilkani boshqalarga ham ulashsangiz, "
-            "ular qo‘shgan guruhlar ham shu ssilka statistikasiga yoziladi."
+            "\n\n🔗 <b>Havola saqlandi.</b> Pastdagi <b>Guruhga qo‘shish</b> tugmasi orqali "
+            "botni guruhingizga qo‘shishingiz yoki shu havolani boshqalarga ulashishingiz mumkin."
         )
     if isinstance(message_or_call, types.CallbackQuery):
         await safe_edit_text(message_or_call.message, text, reply_markup=public_home_kb(bot_username, ref_code))
@@ -163,10 +214,8 @@ async def send_public_home(message_or_call, ref_code: str | None = None):
         await message_or_call.answer(text, reply_markup=public_home_kb(bot_username, ref_code))
 
 
-
-
 async def _register_started_chat(message: types.Message, payload: str = ""):
-    """Guruh/kanalda /start ref_xxx kelganda chatni saqlaydi va referralga bog‘laydi."""
+    """Guruhda /start ref_xxx kelganda chatni saqlaydi va havolaga bog‘laydi."""
     try:
         me = await message.bot.get_me()
         bot_member = await message.bot.get_chat_member(message.chat.id, me.id)
@@ -189,12 +238,11 @@ async def _register_started_chat(message: types.Message, payload: str = ""):
         await track_referral_chat(payload, message.chat.id, message.from_user.id if message.from_user else None)
 
 
-@router.message(Command("start", "panel", "help"))
+@router.message(Command("start", "help"))
 async def start_handler(message: types.Message, command: CommandObject):
     await add_or_update_user(message.from_user)
 
     payload = (command.args or "").strip() if command else ""
-    # CommandObject args bo‘sh bo‘lsa, textdan ham payloadni ajratib olamiz.
     if not payload and message.text:
         parts = message.text.strip().split(maxsplit=1)
         if len(parts) == 2 and parts[0].startswith("/start"):
@@ -202,41 +250,20 @@ async def start_handler(message: types.Message, command: CommandObject):
 
     if message.chat.type in {"group", "supergroup", "channel"}:
         await _register_started_chat(message, payload)
-
-        await message.answer(
-            "✅ <b>Bot guruhga muvaffaqiyatli qo‘shildi!</b>\n\n"
-            "Botning barcha imkoniyatlaridan foydalanish uchun uni administrator qiling.\n\n"
-            "Administrator qilingandan so‘ng bot:\n"
-            "• Taqiqlangan xabarlarni o‘chiradi;\n"
-            "• Qoidabuzar foydalanuvchilarga cheklov qo‘yadi;\n"
-            "• Guruh xavfsizligini avtomatik nazorat qiladi."
-        )
+        await message.answer(GROUP_WELCOME_TEXT)
         return
 
-    # Referral/giper ssilka private chatda saqlanadi.
-    # Muhim: buni admin paneldan OLDIN tekshiramiz, chunki admin ham oddiy user kabi
-    # referral linkni sinab ko‘rishi mumkin. Keyin shu user botni guruh/kanalga
-    # qo‘shsa, my_chat_member event.from_user orqali chat shu ssilkaga bog‘lanadi.
     active_ref_code = None
     if payload.startswith("ref_"):
         saved = await save_user_referral_click(message.from_user.id, payload)
         if saved:
             active_ref_code = payload
 
-    if await has_panel_access(message.from_user.id):
-        if active_ref_code:
-            await send_public_home(message, active_ref_code)
-        else:
-            await message.answer("👋 <b>Admin panel</b>\nKerakli bo‘limni tanlang:", reply_markup=await panel_menu_kb(message.from_user.id))
-        return
-
     await send_public_home(message, active_ref_code)
 
 
 @router.channel_post(F.text.startswith("/start"))
 async def channel_start_handler(message: types.Message):
-    # startchannel=ref_xxx bilan kanalga qo‘shilganda Telegram /start ref_xxx
-    # postini yuborsa, shu yerda kanal referralga bog‘lanadi.
     payload = ""
     if message.text:
         parts = message.text.strip().split(maxsplit=1)
@@ -256,13 +283,10 @@ async def public_guide(call: types.CallbackQuery):
     bot_username = (await call.bot.me()).username
     await safe_edit_text(
         call.message,
-        "📖 <b>To‘liq qo‘llanma</b>\n\n"
-        "Botni to‘g‘ri ulash va sozlash uchun quyidagi bo‘limlarni ketma-ket o‘qing.\n\n"
-        "1️⃣ Botni guruhga qo‘shish\n"
-        "2️⃣ Admin huquqlarini berish\n"
-        "3️⃣ Paneldan sozlamalarni yoqish\n"
-        "4️⃣ Xavfli fayllarni bloklash\n"
-        "5️⃣ Test qilib ko‘rish",
+        "📖 <b>Qo‘llanma</b>\n\n"
+        "Bu bo‘lim foydalanuvchilar uchun. Botni guruhga qo‘shish, xavfsiz foydalanish "
+        "va shubhali fayllardan ehtiyot bo‘lish bo‘yicha qisqa ma’lumotlar beriladi.\n\n"
+        "Kerakli bo‘limni tanlang 👇",
         reply_markup=guide_menu_kb(bot_username, await get_user_referral_click(call.from_user.id)),
     )
     await call.answer()
@@ -273,11 +297,23 @@ async def guide_detail(call: types.CallbackQuery):
     bot_username = (await call.bot.me()).username
     key = call.data.split(":", 1)[1]
     texts = {
-        "add": "1️⃣ <b>Botni guruhga qo‘shish</b>\n\nPastdagi <b>Guruhga qo‘shish</b> tugmasini bosing, kerakli guruhni tanlang va botni qo‘shing. Agar guruh ro‘yxatda chiqmasa, siz u guruhda admin emassiz yoki bot qo‘shish huquqingiz yo‘q.",
-        "rights": "2️⃣ <b>Admin huquqlarini berish</b>\n\nBot guruhni himoya qilishi uchun admin bo‘lishi shart. Eng kerakli huquqlar:\n\n• <b>Delete messages</b> — zararli fayl va yomon so‘zlarni o‘chirish;\n• <b>Restrict members</b> — qoidabuzarni mute qilish;\n• <b>Invite users</b> — referral/giper ssilka uchun;\n• <b>Pin messages</b> — kerak bo‘lsa ogohlantirishlarni mahkamlash.",
-        "panel": "3️⃣ <b>Panel sozlamalari</b>\n\nSuperadmin shaxsiy chatda /start bosadi va admin panelga kiradi. Paneldan yomon so‘zlar, xavfli fayllar, mute vaqti, ogohlantirish limiti, whitelist va admin huquqlarini boshqaradi.",
-        "files": "4️⃣ <b>Xavfli fayllar</b>\n\nPanelda <b>Xavfli fayllar</b> bo‘limiga kiring va kerakli kengaytmalarni qo‘shing:\n<code>.apk</code>, <code>.exe</code>, <code>.bat</code>, <code>.js</code>, <code>.cmd</code>, <code>.scr</code>.\n\nBot ikki martalik kengaytmalarni ham aniqlaydi: <code>rasm.jpg.apk</code>.",
-        "test": "5️⃣ <b>Tekshirib ko‘rish</b>\n\n1. Bot guruhda admin ekanini tekshiring.\n2. <code>.apk</code> kengaytmasini panelga qo‘shing.\n3. Guruhga test uchun <code>test.apk</code> nomli fayl yuboring.\n4. Bot faylni o‘chirishi va log yozishi kerak.\n\nAgar o‘chirmasa: Delete messages huquqi, kengaytma ro‘yxati va whitelistni tekshiring.",
+        "add": (
+            "1️⃣ <b>Botni guruhga qo‘shish</b>\n\n"
+            "Pastdagi <b>Guruhga qo‘shish</b> tugmasini bosing, kerakli guruhni tanlang va botni qo‘shing.\n\n"
+            "Agar guruh ro‘yxatda chiqmasa, sizda u guruhga bot qo‘shish imkoniyati bo‘lmasligi mumkin."
+        ),
+        "safe": (
+            "2️⃣ <b>Guruhni xavfsiz qilish</b>\n\n"
+            "Bot guruhdagi shubhali fayllar, nomaqbul so‘zlar va xavfli ko‘rinadigan xabarlarni "
+            "kamaytirishga yordam beradi.\n\n"
+            "Guruh a’zolariga noma’lum fayllarni ochmaslik va begona havolalarni bosmaslikni eslatib turing."
+        ),
+        "careful": (
+            "3️⃣ <b>Shubhali narsalardan ehtiyot bo‘lish</b>\n\n"
+            "Noma’lum <code>.apk</code>, <code>.exe</code>, <code>.bat</code> kabi fayllarni ochmang.\n"
+            "<code>photo.jpg.apk</code> kabi nomlar ham xavfli bo‘lishi mumkin.\n\n"
+            "Begona odam yuborgan havola, sovrin yoki pul so‘rash xabarlarini avval tekshiring."
+        ),
     }
     await safe_edit_text(call.message, texts.get(key, "Ma’lumot topilmadi."), reply_markup=public_back_kb(bot_username, "pub:guide"))
     await call.answer()
@@ -285,7 +321,7 @@ async def guide_detail(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "pub:demo")
 async def public_demo(call: types.CallbackQuery):
-    await safe_edit_text(call.message, "🧪 <b>Demo</b>\n\nBot qanday ishlashini misollar orqali ko‘ring.", reply_markup=demo_menu_kb())
+    await safe_edit_text(call.message, "🧪 <b>Misollar</b>\n\nBot qanday vaziyatlarda foydali bo‘lishini oddiy misollar orqali ko‘ring.", reply_markup=demo_menu_kb())
     await call.answer()
 
 
@@ -294,13 +330,23 @@ async def demo_detail(call: types.CallbackQuery):
     bot_username = (await call.bot.me()).username
     key = call.data.split(":", 1)[1]
     texts = {
-        "file": "🦠 <b>Zararli fayl misoli</b>\n\nFoydalanuvchi guruhga <code>game.apk</code> yubordi. Agar <code>.apk</code> xavfli ro‘yxatda bo‘lsa:\n\n1. bot faylni aniqlaydi;\n2. maxfiy guruhga ma’lumot yuboradi;\n3. asl guruhdan faylni o‘chiradi;\n4. logga yozadi.",
-        "word": "🚫 <b>Yomon so‘z nazorati</b>\n\nTaqiqlangan so‘zlar paneldan qo‘shiladi. Kimdir shu so‘zni yozsa, bot xabarni o‘chiradi, foydalanuvchiga ogohlantirish beradi va log yozadi.",
-        "mute": "🔇 <b>Ogohlantirish va mute</b>\n\nMasalan limit 3 bo‘lsa, foydalanuvchi 3-marta qoida buzganida vaqtincha yozishdan cheklanadi. Mute vaqti paneldan belgilanadi.",
-        "secret": "🔐 <b>Maxfiy guruh logi</b>\n\nSuperadmin maxfiy guruhni ulaydi. Shundan keyin zararli fayl ushlansa, bot maxfiy guruhga kim tashlagani, qaysi guruhdanligi, fayl nomi va sababini yuboradi.",
-        "admin": "👮 <b>Admin huquqlari</b>\n\nSuperadmin adminlarga faqat kerakli CRUD huquqlarni beradi. Masalan admin faqat <b>read</b> olsa, ko‘radi, lekin yaratmaydi. Yaratish uchun <b>create</b> kerak.",
+        "file": (
+            "🦠 <b>Shubhali fayl misoli</b>\n\n"
+            "Kimdir guruhga <code>game.apk</code> yoki <code>photo.jpg.apk</code> yuborsa, bu xavfli bo‘lishi mumkin.\n\n"
+            "Bunday fayllarni ochishdan oldin manbasini tekshirish kerak."
+        ),
+        "word": (
+            "🚫 <b>Nomaqbul so‘zlar nazorati</b>\n\n"
+            "Guruhda haqorat, spam yoki nomaqbul so‘zlar ko‘payib ketsa, bot ularni kamaytirishga yordam beradi.\n\n"
+            "Bu guruh muhitini toza va xavfsiz saqlashga xizmat qiladi."
+        ),
+        "warn": (
+            "⚠️ <b>Ogohlantirish misoli</b>\n\n"
+            "Agar foydalanuvchi qayta-qayta qoida buzsa, bot uni ogohlantiradi.\n\n"
+            "Bu guruh a’zolariga qoidalarga rioya qilishni eslatadi."
+        ),
     }
-    await safe_edit_text(call.message, texts.get(key, "Demo topilmadi."), reply_markup=public_back_kb(bot_username, "pub:demo"))
+    await safe_edit_text(call.message, texts.get(key, "Misol topilmadi."), reply_markup=public_back_kb(bot_username, "pub:demo"))
     await call.answer()
 
 
@@ -310,10 +356,11 @@ async def public_features(call: types.CallbackQuery):
     await safe_edit_text(
         call.message,
         "⚙️ <b>Bot imkoniyatlari</b>\n\n"
-        "🛡 <b>Guruh himoyasi:</b> yomon so‘zlar, xavfli fayllar, ikki martalik kengaytma, katta fayl va arxiv nazorati.\n\n"
-        "👮 <b>Admin panel:</b> superadmin, adminlar, rollar, CRUD huquqlar, vaqtinchalik admin, audit log.\n\n"
-        "🔐 <b>Monitoring:</b> maxfiy guruhga zararli fayl haqida xabar va batafsil log.\n\n"
-        "📢 <b>Ommaviy xabar:</b> foydalanuvchilar, guruhlar yoki hammaga format saqlangan holda yuborish.",
+        "🛡 Shubhali fayllarni aniqlashga yordam beradi.\n"
+        "🔗 Xavfli havolalardan ehtiyot bo‘lishni eslatadi.\n"
+        "🚫 Nomaqbul so‘zlar va spamni kamaytirishga yordam beradi.\n"
+        "📖 Foydalanuvchilar uchun qo‘llanma beradi.\n"
+        "🧪 Xavfsizlik bo‘yicha qisqa test orqali bilimni tekshiradi.",
         reply_markup=public_back_kb(bot_username),
     )
     await call.answer()
@@ -325,14 +372,12 @@ async def public_support(call: types.CallbackQuery):
     await safe_edit_text(
         call.message,
         "🆘 <b>Yordam</b>\n\n"
-        "Agar bot ishlamasa, quyidagilarni tekshiring:\n\n"
-        "1. Bot guruhda adminmi?\n"
-        "2. Delete messages huquqi bormi?\n"
-        "3. Xavfli kengaytma panelga qo‘shilganmi?\n"
-        "4. Fayl tashlagan odam whitelistda emasmi?\n"
-        "5. Bot serverda ishlab turibdimi?\n"
-        "6. Maxfiy guruh ulanganmi?\n\n"
-        "Ko‘p uchraydigan xato: Telegram network timeout. Bunda fayl maxfiy guruhga yuborilmasligi mumkin, lekin kod faylni guruhdan baribir o‘chirishi kerak.",
+        "Agar bot guruhda ishlamayotgandek ko‘rinsa, quyidagilarni tekshiring:\n\n"
+        "1. Bot guruhga qo‘shilganmi?\n"
+        "2. Bot guruhda administrator qilinganmi?\n"
+        "3. Botdan foydalanish uchun internet aloqasi barqarormi?\n"
+        "4. Guruhda botga xabar yuborish imkoniyati bormi?\n\n"
+        "Muammo davom etsa, bot egasi yoki guruh mas’uli bilan bog‘laning.",
         reply_markup=public_back_kb(bot_username),
     )
     await call.answer()
@@ -366,7 +411,12 @@ async def quiz_start(call: types.CallbackQuery):
 async def show_quiz_question(call: types.CallbackQuery, index: int, score: int):
     bot_username = (await call.bot.me()).username
     if index >= len(QUIZ):
-        level = "A’lo" if score >= 5 else "Yaxshi" if score >= 4 else "Boshlang‘ich"
+        if score >= 8:
+            level = "A’lo"
+        elif score >= 5:
+            level = "Yaxshi"
+        else:
+            level = "Boshlang‘ich"
         await safe_edit_text(
             call.message,
             "🏁 <b>Xavfsizlik testi yakunlandi</b>\n\n"
@@ -378,7 +428,6 @@ async def show_quiz_question(call: types.CallbackQuery, index: int, score: int):
                 [InlineKeyboardButton(text="📖 Qo‘llanma", callback_data="pub:guide")],
                 [InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")],
                 [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username))],
-                [InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=add_channel_url(bot_username))],
             ]),
         )
         await call.answer()
