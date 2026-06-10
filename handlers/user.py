@@ -204,12 +204,12 @@ async def start_handler(message: types.Message, command: CommandObject):
         await _register_started_chat(message, payload)
 
         await message.answer(
-            "✅ <b>Bot guruhda ishga tushdi.</b>\n\n"
-            "To‘liq ishlashim uchun meni admin qiling va quyidagi huquqlarni bering:\n"
-            "• <b>Delete messages</b> — zararli xabar/fayllarni o‘chirish;\n"
-            "• <b>Restrict members</b> — qoidabuzarni vaqtincha cheklash;\n"
-            "• <b>Invite users</b> — qo‘shish havolalari uchun.\n\n"
-            "Sozlamalar superadmin panelidan boshqariladi."
+            "✅ <b>Bot guruhga muvaffaqiyatli qo‘shildi!</b>\n\n"
+            "Botning barcha imkoniyatlaridan foydalanish uchun uni administrator qiling.\n\n"
+            "Administrator qilingandan so‘ng bot:\n"
+            "• Taqiqlangan xabarlarni o‘chiradi;\n"
+            "• Qoidabuzar foydalanuvchilarga cheklov qo‘yadi;\n"
+            "• Guruh xavfsizligini avtomatik nazorat qiladi."
         )
         return
 
