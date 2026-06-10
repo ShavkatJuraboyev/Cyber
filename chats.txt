@@ -1,5 +1,0 @@
-ID: -1002442008186 | dasturlash | supergroup | Admin: False | Status: kicked | link: https://t.me/dasturlashcode_group
-ID: -1003960369231 | Maxviy | supergroup | Admin: True | Status: administrator | link: None
-ID: -1003086461890 | Test123 | supergroup | Admin: True | Status: administrator | link: None
-ID: -1002467284017 | Python test | supergroup | Admin: True | Status: administrator | link: https://t.me/python_test1123
-ID: -1003790679255 | testbot | supergroup | Admin: True | Status: administrator | link: None
