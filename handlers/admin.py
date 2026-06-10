@@ -1,322 +1,37 @@
-import asyncio
-import logging
-import os
-import re
-import secrets
-from datetime import datetime, timedelta, timezone
-from html import escape
-from pathlib import Path
+from .common import *
 
-from aiogram import Router, types, F
-from aiogram.enums import ChatMemberStatus
-from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.filters import Command, CommandObject
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup
-
-from config import ADMIN_ID
-from database import (
-    add_bad_word,
-    add_or_update_chat,
-    add_or_update_user,
-    add_security_log,
-    add_unsafe_extension,
-    create_referral_link,
-    add_warning,
-    add_whitelist_user,
-    get_all_chats,
-    get_all_users,
-    get_chat_count,
-    get_mute_minutes,
-    get_referral_chats,
-    get_referral_stats,
-    get_security_logs,
-    get_settings,
-    get_user_by_id,
-    is_whitelisted,
-    list_bad_words,
-    list_unsafe_extensions,
-    list_whitelist,
-    remove_bad_word,
-    remove_unsafe_extension,
-    remove_unsafe_all_extensions,
-    track_referral_chat,
-    remove_whitelist_user,
-    reset_warning,
-    set_mute_minutes,
-    update_setting,
-)
-from utils.file_export import export_chats_to_pdf, export_chats_to_txt
-
-logger = logging.getLogger(__name__)
 router = Router()
 
-USERS_PER_PAGE = 10
-CHATS_PER_PAGE = 10
-REF_LINKS_PER_PAGE = 10
-REF_GROUPS_PER_PAGE = 10
-
-
-class BadWordStates(StatesGroup):
-    add_words = State()
-    remove_words = State()
-
-
-class MuteStates(StatesGroup):
-    choose_chat = State()
-    enter_minutes = State()
-
-
-class WhitelistStates(StatesGroup):
-    add_choose_chat = State()
-    add_enter_user = State()
-    rem_choose_chat = State()
-    rem_enter_user = State()
-
-
-class ExtStates(StatesGroup):
-    add_ext = State()
-    remove_ext = State()
-    remove_all = State()
-
-
-class SettingStates(StatesGroup):
-    choose_chat = State()
-    enter_value = State()
-
-
-class MediaState(StatesGroup):
-    waiting_media = State()
-
-
-class ReferralStates(StatesGroup):
-    enter_name = State()
-
-
-def is_super_admin(user_id: int | None) -> bool:
-    return bool(user_id and user_id in ADMIN_ID)
-
-
-async def is_group_admin(message_or_call) -> bool:
-    chat = message_or_call.chat if isinstance(message_or_call, types.Message) else message_or_call.message.chat
-    user = message_or_call.from_user
-    if not user:
-        return False
-    if is_super_admin(user.id):
-        return True
-    if chat.type not in {"group", "supergroup"}:
-        return False
-    try:
-        member = await message_or_call.bot.get_chat_member(chat.id, user.id)
-        return member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
-    except Exception:
-        return False
-
-
-def main_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [
-            InlineKeyboardButton(text="📊 Statistika", callback_data="stats"),
-            InlineKeyboardButton(text="🧾 Oxirgi loglar", callback_data="logs"),
-        ],
-        [
-            InlineKeyboardButton(text="🛡 Yomon so‘zlar", callback_data="bw:menu"),
-            InlineKeyboardButton(text="🦠 Xavfli fayllar", callback_data="ext:menu"),
-        ],
-        [
-            InlineKeyboardButton(text="⏱ Mute va sozlamalar", callback_data="settings:menu"),
-            InlineKeyboardButton(text="✅ Oq ro‘yxat", callback_data="wh:menu"),
-        ],
-        [
-            InlineKeyboardButton(text="👥 Foydalanuvchilar", callback_data="users:page:0"),
-            InlineKeyboardButton(text="🖼 Ommaviy xabar", callback_data="media:start"),
-        ],
-        [
-            InlineKeyboardButton(text="🔗 Giper ssilkalar", callback_data="ref:menu"),
-        ],
-        [
-            InlineKeyboardButton(text="📄 TXT eksport", callback_data="export:txt"),
-            InlineKeyboardButton(text="📑 PDF eksport", callback_data="export:pdf"),
-        ],
-    ])
-
-
-def back_to_main_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")]
-    ])
-
-
-def back_to_settings_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⬅️ Sozlamalarga qaytish", callback_data="settings:menu")],
-        [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")],
-    ])
-
-
-def public_kb(bot_username: str) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=f"https://t.me/{bot_username}?startgroup=new")],
-        [InlineKeyboardButton(text="ℹ️ Qo‘llanma", callback_data="help_info")],
-    ])
-
-
-def short_name(user: types.User | None) -> str:
-    if not user:
-        return "Noma’lum"
-    name = user.full_name or "Foydalanuvchi"
-    if user.username:
-        return f"{name} (@{user.username})"
-    return name
-
-
-def normalize_items(text: str) -> list[str]:
-    return [x.strip().lower() for x in re.split(r"[,\n]+", text or "") if x.strip()]
-
-
-def get_document_ext(filename: str) -> str:
-    return Path(filename or "").suffix.lower()
-
-
-def has_double_extension(filename: str) -> bool:
-    parts = Path(filename or "").name.lower().split(".")
-    return len(parts) >= 3 and ("." + parts[-2]) in {
-        ".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx", ".xls", ".xlsx", ".txt"
-    }
-
-
-def is_archive(filename: str) -> bool:
-    return get_document_ext(filename) in {".zip", ".rar", ".7z", ".tar", ".gz"}
-
-
-def contains_bad_word(text: str, words: list[str]) -> bool:
-    if not text or not words:
-        return False
-    # Katta ro‘yxatda ham xavfsiz ishlashi uchun eng uzun so‘zlardan boshlaymiz.
-    words = sorted({w.strip().lower() for w in words if w.strip()}, key=len, reverse=True)
-    pattern = r"(?<![\w'])(" + "|".join(re.escape(w) for w in words) + r")(?![\w'])"
-    return bool(re.search(pattern, text.lower(), flags=re.IGNORECASE | re.UNICODE))
-
-
-async def delete_later(message: types.Message, seconds: int = 5):
-    await asyncio.sleep(seconds)
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-
-async def mute_user(bot, chat_id: int, user_id: int, minutes: int):
-    until = datetime.now(timezone.utc) + timedelta(minutes=minutes)
-    perms = ChatPermissions(
-        can_send_messages=False,
-        can_send_audios=False,
-        can_send_documents=False,
-        can_send_photos=False,
-        can_send_videos=False,
-        can_send_video_notes=False,
-        can_send_voice_notes=False,
-        can_send_polls=False,
-        can_add_web_page_previews=False,
-    )
-    await bot.restrict_chat_member(chat_id=chat_id, user_id=user_id, permissions=perms, until_date=until)
-
-
-async def choose_chat_keyboard(prefix: str, page: int = 0) -> InlineKeyboardMarkup:
-    chats = await get_all_chats()
-    start = page * CHATS_PER_PAGE
-    end = start + CHATS_PER_PAGE
-    rows = [
-        [InlineKeyboardButton(text=(title or str(chat_id))[:60], callback_data=f"{prefix}:chat:{chat_id}")]
-        for chat_id, title, *_ in chats[start:end]
-    ]
-    nav = []
-    if page > 0:
-        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"{prefix}:page:{page-1}"))
-    if end < len(chats):
-        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"{prefix}:page:{page+1}"))
-    if nav:
-        rows.append(nav)
-    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+async def referral_menu_kb(user_id: int) -> InlineKeyboardMarkup:
+    perms = await get_admin_effective_permissions(user_id) if not is_super_admin(user_id) else set(PANEL_PERMISSIONS)
+    rows = []
+    if can_create(perms, "referrals"):
+        rows.append([InlineKeyboardButton(text="➕ Yangi giper ssilka", callback_data="ref:create")])
+    if can_read(perms, "referrals"):
+        rows.append([InlineKeyboardButton(text="📊 Ssilka statistikasi", callback_data="ref:list")])
+        rows.append([InlineKeyboardButton(text="🧩 Biriktirilmagan guruhlar", callback_data="ref:unlinked:0")])
+    rows.append([InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
-
-
-async def get_chat_link(chat: types.Chat):
-    if chat.username:
-        return f"https://t.me/{chat.username}"
-    return None
-
-
-@router.message(Command("start", "panel"))
-async def start_handler(message: types.Message, command: CommandObject):
-    await add_or_update_user(message.from_user)
-
-    if message.chat.type in {"group", "supergroup", "channel"}:
-        try:
-            bot_member = await message.bot.get_chat_member(message.chat.id, (await message.bot.me()).id)
-            is_bot_admin = 1 if bot_member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR} else 0
-        except Exception:
-            is_bot_admin = 0
-
-        await add_or_update_chat(
-            message.chat.id,
-            message.chat.title or "Noma’lum",
-            message.chat.type,
-            await get_chat_link(message.chat),
-            is_bot_admin
-        )
-
-        payload = (command.args or "").strip() if command else ""
-        if payload.startswith("ref_"):
-            await track_referral_chat(payload, message.chat.id)
-
-        await message.answer("✅ Xavfsizlik boti guruhda ishlayapti. Botga xabarlarni o‘chirish va foydalanuvchini cheklash huquqini bering.")
-        return
-
-    if is_super_admin(message.from_user.id):
-        await message.answer("👋 <b>Admin panel</b>\nKerakli bo‘limni tanlang:", reply_markup=main_menu_kb())
-        return
-
-    bot_username = (await message.bot.me()).username
-    await message.answer(
-        "👋 <b>Salom!</b>\n\n"
-        "Men guruhingizni xavfsizroq qilishga yordam beraman:\n"
-        "• yomon so‘zlarni o‘chiraman;\n"
-        "• xavfli fayllarni bloklayman;\n"
-        "• qoidabuzarlarga ogohlantirish berib, kerak bo‘lsa vaqtincha mute qilaman.\n\n"
-        "Botni guruhga qo‘shing va admin huquqini bering.",
-        reply_markup=public_kb(bot_username)
-    )
-
-
-
-
-def referral_menu_kb() -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Yangi giper ssilka", callback_data="ref:create")],
-        [InlineKeyboardButton(text="📊 Ssilka statistikasi", callback_data="ref:list")],
-        [InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")],
-    ])
 
 
 @router.callback_query(F.data == "ref:menu")
 async def referral_menu(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "referrals"):
+        return
+
     await state.clear()
     await call.message.edit_text(
         "🔗 <b>Giper ssilkalar</b>\n\n"
         "Bu yerda botni guruhlarga qo‘shish uchun cheksiz havola yaratish va har bir havola statistikalarini ko‘rish mumkin.",
-        reply_markup=referral_menu_kb()
+        reply_markup=await referral_menu_kb(call.from_user.id)
     )
     await call.answer()
 
 
 @router.callback_query(F.data == "ref:create")
 async def referral_create_start(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "referrals.create"):
+        return
     await state.set_state(ReferralStates.enter_name)
     await call.message.edit_text("Yangi ssilka nomini yuboring. Masalan: <b>Instagram reklama</b>", reply_markup=back_to_main_kb())
     await call.answer()
@@ -324,7 +39,7 @@ async def referral_create_start(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(ReferralStates.enter_name)
 async def referral_create_finish(message: types.Message, state: FSMContext):
-    if not is_super_admin(message.from_user.id):
+    if not await has_panel_access(message.from_user.id, "referrals.create"):
         return
 
     name = (message.text or "").strip()[:100] or "Nomsiz havola"
@@ -342,15 +57,15 @@ async def referral_create_finish(message: types.Message, state: FSMContext):
         f"🏷 Nomi: <b>{escape(name)}</b>\n"
         f"🔗 Havola:\n<code>{escape(url)}</code>\n\n"
         "Bu havola orqali bot guruhga qo‘shilganda statistika avtomatik hisoblanadi.",
-        reply_markup=referral_menu_kb()
+        reply_markup=await referral_menu_kb(message.from_user.id)
     )
     await state.clear()
 
 
 @router.callback_query(F.data.startswith("ref:list"))
 async def referral_list(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "referrals.read"):
+        return
 
     parts = call.data.split(":")
     page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
@@ -358,7 +73,7 @@ async def referral_list(call: types.CallbackQuery):
     rows = await get_referral_stats()
     total = len(rows)
     if not rows:
-        await call.message.edit_text("🔗 Hozircha ssilka yaratilmagan.", reply_markup=referral_menu_kb())
+        await call.message.edit_text("🔗 Hozircha ssilka yaratilmagan.", reply_markup=await referral_menu_kb(call.from_user.id))
         return await call.answer()
 
     max_page = max((total - 1) // REF_LINKS_PER_PAGE, 0)
@@ -375,7 +90,10 @@ async def referral_list(call: types.CallbackQuery):
     kb_rows = []
 
     for number, (link_id, name, code, groups_count, admin_count, created_at) in enumerate(page_rows, start=start + 1):
-        url = f"https://t.me/{bot_username}?startgroup={code}&admin=delete_messages+restrict_members"
+        url = (
+            f"https://t.me/{bot_username}?startgroup={code}"
+            "&admin=delete_messages+restrict_members+invite_users+pin_messages"
+        )
         text += (
             f"{number}. 🔹 <b>{escape(name)}</b>\n"
             f"👥 Qo‘shilgan guruhlar: <b>{groups_count}</b>\n"
@@ -402,8 +120,8 @@ async def referral_list(call: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("ref:detail:"))
 async def referral_detail(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "referrals.read"):
+        return
 
     parts = call.data.split(":")
     link_id = int(parts[2])
@@ -434,12 +152,13 @@ async def referral_detail(call: types.CallbackQuery):
     if not chats:
         text += "Bu ssilka orqali hali guruh qo‘shilmagan."
     else:
-        for number, (chat_id, title, chat_type, is_admin, added_at) in enumerate(page_chats, start=start + 1):
-            status = "🛡 admin" if is_admin else "⚠️ admin emas"
+        for number, row in enumerate(page_chats, start=start + 1):
+            chat_id, title, chat_type, is_admin, bot_status, added_at = row
+            status = render_bot_status(is_admin, bot_status)
             text += (
                 f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
-                f"ID: <code>{chat_id}</code> | {status}\n\n"
-
+                f"   ID: <code>{chat_id}</code> | {status}\n"
+                f"   Qo‘shilgan: <code>{escape(str(added_at))}</code>\n\n"
             )
 
     kb_rows = []
@@ -457,6 +176,105 @@ async def referral_detail(call: types.CallbackQuery):
     await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
+@router.callback_query(F.data.startswith("ref:unlinked:"))
+async def referral_unlinked_chats(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "referrals.read"):
+        return
+
+    parts = call.data.split(":")
+    page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    chats = await get_chats_without_referral()
+    total = len(chats)
+
+    if not chats:
+        await call.message.edit_text(
+            "✅ Hamma saqlangan guruh/kanallar referral ssilkaga biriktirilgan.",
+            reply_markup=await referral_menu_kb(call.from_user.id)
+        )
+        return await call.answer()
+
+    max_page = max((total - 1) // REF_GROUPS_PER_PAGE, 0)
+    page = max(0, min(page, max_page))
+    start = page * REF_GROUPS_PER_PAGE
+    end = start + REF_GROUPS_PER_PAGE
+
+    text = (
+        "🧩 <b>Ssilkaga biriktirilmagan guruh/kanallar</b>\n"
+        f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | Jami: <b>{total}</b>\n\n"
+        "Maxfiy guruhlarda Telegram ba’zan startgroup payloadni yubormaydi. "
+        "Shunda guruh bazaga tushadi, lekin qaysi ssilka orqali kelgani bilinmaydi. Quyidan qo‘lda biriktiring.\n\n"
+    )
+    kb_rows = []
+    for number, row in enumerate(chats[start:end], start=start + 1):
+        chat_id, title, chat_type, invite_link, is_admin, bot_status = row
+        text += f"{number}. <b>{escape(title or str(chat_id))}</b> — {render_bot_status(is_admin, bot_status)}\n"
+        kb_rows.append([InlineKeyboardButton(
+            text=f"🔗 {number}. {(title or str(chat_id))[:30]}",
+            callback_data=f"ref:pickchat:{chat_id}:{page}"
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"ref:unlinked:{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"ref:unlinked:{page + 1}"))
+    if nav:
+        kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")])
+
+    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ref:pickchat:"))
+async def referral_pick_chat(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "referrals.update"):
+        return
+
+    parts = call.data.split(":")
+    chat_id = int(parts[2])
+    back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    links = await get_referral_stats()
+
+    if not links:
+        await call.message.edit_text("🔗 Avval giper ssilka yarating.", reply_markup=await referral_menu_kb(call.from_user.id))
+        return await call.answer()
+
+    rows = []
+    for link_id, name, code, groups_count, admin_count, created_at in links[:40]:
+        rows.append([InlineKeyboardButton(
+            text=f"{name[:35]} ({groups_count})",
+            callback_data=f"ref:assign:{link_id}:{chat_id}:{back_page}"
+        )])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"ref:unlinked:{back_page}")])
+
+    await call.message.edit_text(
+        "Qaysi giper ssilkaga biriktirasiz?",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ref:assign:"))
+async def referral_assign_chat(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "referrals.update"):
+        return
+
+    parts = call.data.split(":")
+    link_id = int(parts[2])
+    chat_id = int(parts[3])
+    back_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+    ok = await assign_chat_to_referral(link_id, chat_id)
+    await call.answer("✅ Biriktirildi." if ok else "❌ Biriktirib bo‘lmadi.", show_alert=True)
+    await call.message.edit_text(
+        "✅ Guruh/kanal ssilkaga biriktirildi." if ok else "❌ Guruh yoki ssilka topilmadi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Biriktirilmaganlarga qaytish", callback_data=f"ref:unlinked:{back_page}")],
+            [InlineKeyboardButton(text="📊 Ssilka statistikasi", callback_data="ref:list")],
+        ])
+    )
+
+
 @router.callback_query(F.data == "help_info")
 async def show_help(call: types.CallbackQuery):
     await call.message.edit_text(
@@ -472,62 +290,148 @@ async def show_help(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "menu:main")
 async def go_main_menu(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call):
+        return
     await state.clear()
-    await call.message.edit_text("🏠 <b>Asosiy menyu</b>", reply_markup=main_menu_kb())
+    await call.message.edit_text("🏠 <b>Asosiy menyu</b>", reply_markup=await panel_menu_kb(call.from_user.id))
     await call.answer()
-
-
-@router.my_chat_member()
-async def chat_member_handler(event: types.ChatMemberUpdated):
-    chat = event.chat
-    status = event.new_chat_member.status
-    if chat.type in {"group", "supergroup", "channel"}:
-        is_admin_flag = 1 if status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR} else 0
-        await add_or_update_chat(chat.id, chat.title or "Noma’lum", chat.type, await get_chat_link(chat), is_admin_flag)
-
-
-@router.message(F.new_chat_members)
-async def save_new_members(message: types.Message):
-    for user in message.new_chat_members or []:
-        if not user.is_bot:
-            await add_or_update_user(user)
-
-
-@router.message(F.left_chat_member)
-async def service_left_member(message: types.Message):
-    settings = await get_settings(message.chat.id)
-    if settings["delete_service_messages"]:
-        try:
-            await message.delete()
-        except Exception:
-            pass
-
 
 @router.callback_query(F.data == "stats")
 async def statistics_handler(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
-    chats = await get_all_chats()
+    if await deny_if_no_permission(call, "stats.read"):
+        return
+
+    chats = await refresh_all_chat_statuses(call.bot)
     users = await get_all_users()
     bot_admin_chats = sum(1 for c in chats if c[4] == 1)
+    not_member_chats = sum(1 for c in chats if len(c) > 5 and c[5] in {"not_member", "left", "kicked"})
     text = (
         "📊 <b>Statistika</b>\n\n"
         f"👥 Guruh/kanallar: <b>{len(chats)}</b>\n"
-        f"🛡 Bot admin bo‘lgan chatlar: <b>{bot_admin_chats}</b>\n"
+        f"🛡 Bot admin bo‘lgan Guruh/kanallar: <b>{bot_admin_chats}</b>\n"
+        f"🚪 Bot a’zo bo‘lmagan Guruh/kanallar: <b>{not_member_chats}</b>\n"
         f"👤 Saqlangan foydalanuvchilar: <b>{len(users)}</b>\n"
         f"🦠 Global xavfli kengaytmalar: <b>{len(await list_unsafe_extensions(None))}</b>\n"
         f"🚫 Global yomon so‘zlar: <b>{len(await list_bad_words(None))}</b>"
     )
-    await call.message.edit_text(text, reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, text, reply_markup=stats_kb())
+    await call.answer("✅ Statistika yangilandi")
+
+
+@router.callback_query(F.data.startswith("chats:page:"))
+async def chats_page_handler(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "chats.read"):
+        return
+
+    parts = call.data.split(":")
+    page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    chats = await refresh_all_chat_statuses(call.bot)
+    total = len(chats)
+
+    if not chats:
+        await call.message.edit_text("📋 Hozircha guruh yoki kanal yo‘q.", reply_markup=stats_kb())
+        return await call.answer()
+
+    max_page = max((total - 1) // CHATS_PER_PAGE, 0)
+    page = max(0, min(page, max_page))
+    start = page * CHATS_PER_PAGE
+    end = start + CHATS_PER_PAGE
+
+    text = f"📋 <b>Guruh/kanallar ro‘yxati</b>\nSahifa: <b>{page + 1}/{max_page + 1}</b> | Jami: <b>{total}</b>\n\n"
+    kb_rows = []
+
+    for number, row in enumerate(chats[start:end], start=start + 1):
+        chat_id, title, chat_type, invite_link, is_admin, bot_status = row
+        text += (
+            f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
+            f"   Turi: <code>{escape(str(chat_type))}</code> | {render_bot_status(is_admin, bot_status)}\n"
+            f"   ID: <code>{chat_id}</code>\n\n"
+        )
+        kb_rows.append([InlineKeyboardButton(
+            text=f"{number}. {(title or str(chat_id))[:32]}",
+            callback_data=f"chats:detail:{chat_id}:{page}"
+        )])
+
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"chats:page:{page - 1}"))
+    if end < total:
+        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"chats:page:{page + 1}"))
+    if nav:
+        kb_rows.append(nav)
+
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data="stats")])
+    kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
+
+    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("chats:detail:"))
+async def chat_detail_handler(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "chats.read"):
+        return
+
+    parts = call.data.split(":")
+    chat_id = int(parts[2])
+    back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+
+    await refresh_one_chat_status(call.bot, chat_id)
+    chats = await get_all_chats()
+    row = next((c for c in chats if c[0] == chat_id), None)
+    if not row:
+        await call.message.edit_text("❌ Bu chat bazadan topilmadi.", reply_markup=stats_kb())
+        return await call.answer()
+
+    chat_id, title, chat_type, invite_link, is_admin, bot_status = row
+    text = (
+        f"📌 <b>{escape(title or str(chat_id))}</b>\n\n"
+        f"ID: <code>{chat_id}</code>\n"
+        f"Turi: <code>{escape(str(chat_type))}</code>\n"
+        f"Status: {render_bot_status(is_admin, bot_status)}\n"
+        f"Link: {escape(invite_link or 'yo‘q')}\n\n"
+    )
+
+    if bot_status in {"not_member", "left", "kicked"}:
+        text += "⚠️ Bot bu guruh/kanalda a’zo emas. Kerak bo‘lsa bazadan o‘chirishingiz mumkin."
+    elif not is_admin:
+        text += "⚠️ Bot a’zo, lekin admin emas. Telegramda botga admin huquqlarini bering."
+    else:
+        text += "✅ Bot admin."
+
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Statusni tekshirish", callback_data=f"chats:detail:{chat_id}:{back_page}")],
+        [InlineKeyboardButton(text="🗑 Bazadan o‘chirish", callback_data=f"chats:delete:{chat_id}:{back_page}")],
+        [InlineKeyboardButton(text="⬅️ Ro‘yxatga qaytish", callback_data=f"chats:page:{back_page}")],
+        [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")],
+    ])
+    await call.message.edit_text(text, reply_markup=kb)
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("chats:delete:"))
+async def chat_delete_handler(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "chats.delete"):
+        return
+
+    parts = call.data.split(":")
+    chat_id = int(parts[2])
+    back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    deleted = await delete_chat(chat_id)
+    await call.answer("✅ Bazadan o‘chirildi." if deleted else "❌ Bazada topilmadi.", show_alert=True)
+    await call.message.edit_text(
+        "✅ Chat bazadan o‘chirildi." if deleted else "❌ Chat bazada topilmadi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Ro‘yxatga qaytish", callback_data=f"chats:page:{back_page}")],
+            [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")],
+        ])
+    )
 
 
 @router.callback_query(F.data == "logs")
 async def logs_handler(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "logs.read"):
+        return
     rows = await get_security_logs(20)
     if not rows:
         text = "🧾 Hozircha loglar yo‘q."
@@ -546,8 +450,8 @@ async def logs_handler(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "export:txt")
 async def export_txt_handler(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "exports.action"):
+        return
     chats = await get_all_chats()
     print(chats)
     file_path = export_chats_to_txt(chats)
@@ -557,8 +461,8 @@ async def export_txt_handler(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "export:pdf")
 async def export_pdf_handler(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "exports.action"):
+        return
     chats = await get_all_chats()
     print(chats)
     file_path = export_chats_to_pdf(chats)
@@ -568,24 +472,36 @@ async def export_pdf_handler(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "bw:menu")
 async def bad_words_menu(call: types.CallbackQuery):
-    if not await is_group_admin(call):
+    if call.message.chat.type == "private":
+        if await deny_if_no_permission(call, "bad_words"):
+            return
+        perms = await get_admin_effective_permissions(call.from_user.id) if not is_super_admin(call.from_user.id) else set(PANEL_PERMISSIONS)
+    elif not await is_group_admin(call):
         return await call.answer("⛔ Siz admin emassiz.", show_alert=True)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ So‘z qo‘shish", callback_data="bw:add")],
-        [InlineKeyboardButton(text="➖ So‘z o‘chirish", callback_data="bw:remove")],
-        [
+    else:
+        perms = set(PANEL_PERMISSIONS)
+    rows = []
+    if can_create(perms, "bad_words"):
+        rows.append([InlineKeyboardButton(text="➕ So‘z qo‘shish", callback_data="bw:add")])
+    if can_delete(perms, "bad_words"):
+        rows.append([InlineKeyboardButton(text="➖ So‘z o‘chirish", callback_data="bw:remove")])
+    if can_read(perms, "bad_words"):
+        rows.append([
             InlineKeyboardButton(text="📃 Global ro‘yxat", callback_data="bw:list:g"),
             InlineKeyboardButton(text="📃 Chat ro‘yxati", callback_data="bw:list:c"),
-        ],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
-    ])
+        ])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await call.message.edit_text("🛡 <b>Yomon so‘zlar boshqaruvi</b>", reply_markup=kb)
     await call.answer()
 
 
 @router.callback_query(F.data == "bw:add")
 async def bw_add_prompt(call: types.CallbackQuery, state: FSMContext):
-    if not await is_group_admin(call):
+    if call.message.chat.type == "private":
+        if await deny_if_no_permission(call, "bad_words.create"):
+            return
+    elif not await is_group_admin(call):
         return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
     await state.set_state(BadWordStates.add_words)
     await call.message.edit_text("Qo‘shiladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
@@ -594,9 +510,14 @@ async def bw_add_prompt(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(BadWordStates.add_words, F.text)
 async def bw_add_take(message: types.Message, state: FSMContext):
-    if not await is_group_admin(message):
-        return
-    target_chat = None if is_super_admin(message.from_user.id) and message.chat.type == "private" else message.chat.id
+    if message.chat.type == "private":
+        if not await has_panel_access(message.from_user.id, "bad_words.create"):
+            return
+        target_chat = None
+    else:
+        if not await is_group_admin(message):
+            return
+        target_chat = message.chat.id
     items = normalize_items(message.text)
     added = 0
     for word in items:
@@ -608,7 +529,10 @@ async def bw_add_take(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "bw:remove")
 async def bw_remove_prompt(call: types.CallbackQuery, state: FSMContext):
-    if not await is_group_admin(call):
+    if call.message.chat.type == "private":
+        if await deny_if_no_permission(call, "bad_words.delete"):
+            return
+    elif not await is_group_admin(call):
         return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
     await state.set_state(BadWordStates.remove_words)
     await call.message.edit_text("O‘chiriladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
@@ -617,9 +541,14 @@ async def bw_remove_prompt(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(BadWordStates.remove_words, F.text)
 async def bw_remove_take(message: types.Message, state: FSMContext):
-    if not await is_group_admin(message):
-        return
-    target_chat = None if is_super_admin(message.from_user.id) and message.chat.type == "private" else message.chat.id
+    if message.chat.type == "private":
+        if not await has_panel_access(message.from_user.id, "bad_words.delete"):
+            return
+        target_chat = None
+    else:
+        if not await is_group_admin(message):
+            return
+        target_chat = message.chat.id
     removed = 0
     for word in normalize_items(message.text):
         if await remove_bad_word(word, target_chat):
@@ -630,9 +559,14 @@ async def bw_remove_take(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data.in_({"bw:list:g", "bw:list:c"}))
 async def list_words(call: types.CallbackQuery):
-    if not await is_group_admin(call):
-        return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
-    chat_id = None if call.data == "bw:list:g" else call.message.chat.id
+    if call.message.chat.type == "private":
+        if await deny_if_no_permission(call, "bad_words.read"):
+            return
+        chat_id = None
+    else:
+        if not await is_group_admin(call):
+            return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
+        chat_id = None if call.data == "bw:list:g" else call.message.chat.id
     words = await list_bad_words(chat_id)
     title = "Global yomon so‘zlar" if chat_id is None else "Ushbu chatdagi yomon so‘zlar"
     text = f"📃 <b>{title}</b>\n\n" + ("\n".join(f"• {escape(w)}" for w in words) if words else "Ro‘yxat bo‘sh.")
@@ -642,22 +576,26 @@ async def list_words(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "ext:menu")
 async def ext_menu(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Kengaytma qo‘shish", callback_data="ext:add")],
-        [InlineKeyboardButton(text="➖ Kengaytma o‘chirish", callback_data="ext:remove")],
-        [InlineKeyboardButton(text="🗑 Barchasini o‘chirish", callback_data="ext:remove_all")],
-        [InlineKeyboardButton(text="📃 Ro‘yxat", callback_data="ext:list")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
-    ])
+    if await deny_if_no_permission(call, "extensions"):
+        return
+    perms = await get_admin_effective_permissions(call.from_user.id) if not is_super_admin(call.from_user.id) else set(PANEL_PERMISSIONS)
+    rows = []
+    if can_create(perms, "extensions"):
+        rows.append([InlineKeyboardButton(text="➕ Kengaytma qo‘shish", callback_data="ext:add")])
+    if can_delete(perms, "extensions"):
+        rows.append([InlineKeyboardButton(text="➖ Kengaytma o‘chirish", callback_data="ext:remove")])
+        rows.append([InlineKeyboardButton(text="🗑 Barchasini o‘chirish", callback_data="ext:remove_all")])
+    if can_read(perms, "extensions"):
+        rows.append([InlineKeyboardButton(text="📃 Ro‘yxat", callback_data="ext:list")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await call.message.edit_text("🦠 <b>Xavfli fayl kengaytmalari</b>", reply_markup=kb)
     await call.answer()
 
 
 @router.callback_query(F.data == "ext:add")
 async def ext_add_prompt(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "extensions.create"):
         return
     await state.set_state(ExtStates.add_ext)
     await call.message.edit_text("Qo‘shiladigan kengaytmalarni yuboring. Masalan: <code>.exe, .apk, .js</code>", reply_markup=back_to_main_kb())
@@ -666,7 +604,7 @@ async def ext_add_prompt(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(ExtStates.add_ext, F.text)
 async def ext_add_take(message: types.Message, state: FSMContext):
-    if not is_super_admin(message.from_user.id):
+    if not await has_panel_access(message.from_user.id, "extensions.create"):
         return
     for ext in normalize_items(message.text):
         await add_unsafe_extension(ext, None)
@@ -676,7 +614,7 @@ async def ext_add_take(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "ext:remove")
 async def ext_remove_prompt(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "extensions.delete"):
         return
     await state.set_state(ExtStates.remove_ext)
     await call.message.edit_text("O‘chiriladigan kengaytmalarni yuboring.", reply_markup=back_to_main_kb())
@@ -685,7 +623,7 @@ async def ext_remove_prompt(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(ExtStates.remove_ext, F.text)
 async def ext_remove_take(message: types.Message, state: FSMContext):
-    if not is_super_admin(message.from_user.id):
+    if not await has_panel_access(message.from_user.id, "extensions.delete"):
         return
     for ext in normalize_items(message.text):
         await remove_unsafe_extension(ext, None)
@@ -695,7 +633,7 @@ async def ext_remove_take(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "ext:remove_all")
 async def ext_remove_all(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "extensions.delete"):
         return
     await remove_unsafe_all_extensions(None)
     await call.message.answer("🗑 Barcha xavfli kengaytmalar o‘chirildi.", reply_markup=back_to_main_kb())
@@ -703,7 +641,7 @@ async def ext_remove_all(call: types.CallbackQuery):
 
 @router.callback_query(ExtStates.remove_all, F.data == "ext:remove_all")
 async def ext_remove_all_confirm(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "extensions.delete"):
         return
     await remove_unsafe_all_extensions(None)
     await call.message.answer("🗑 Barcha xavfli kengaytmalar o‘chirildi.", reply_markup=back_to_main_kb())
@@ -713,7 +651,7 @@ async def ext_remove_all_confirm(call: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data == "ext:list")
 async def ext_list(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "extensions.read"):
         return
     exts = await list_unsafe_extensions(None)
     text = "🦠 <b>Xavfli kengaytmalar</b>\n\n" + ("\n".join(f"• <code>{escape(e)}</code>" for e in exts) if exts else "Ro‘yxat bo‘sh.")
@@ -723,22 +661,28 @@ async def ext_list(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "settings:menu")
 async def settings_menu(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="⏱ Mute vaqti", callback_data="set:mute_minutes")],
-        [InlineKeyboardButton(text="⚠️ Ogohlantirish limiti", callback_data="set:max_warnings")],
-        [InlineKeyboardButton(text="📦 Maksimal fayl MB", callback_data="set:max_file_mb")],
-        [InlineKeyboardButton(text="📁 Arxivlarni bloklash", callback_data="set:block_archives")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
-    ])
+    if await deny_if_no_permission(call, "settings"):
+        return
+    perms = await get_admin_effective_permissions(call.from_user.id) if not is_super_admin(call.from_user.id) else set(PANEL_PERMISSIONS)
+    rows = []
+    if can_update(perms, "settings"):
+        rows.extend([
+            [InlineKeyboardButton(text="⏱ Mute vaqti", callback_data="set:mute_minutes")],
+            [InlineKeyboardButton(text="⚠️ Ogohlantirish limiti", callback_data="set:max_warnings")],
+            [InlineKeyboardButton(text="📦 Maksimal fayl MB", callback_data="set:max_file_mb")],
+            [InlineKeyboardButton(text="📁 Arxivlarni bloklash", callback_data="set:block_archives")],
+        ])
+    if not rows:
+        rows.append([InlineKeyboardButton(text="⛔ Faqat ko‘rish huquqida sozlama o‘zgartirib bo‘lmaydi", callback_data="noop")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await call.message.edit_text("⚙️ <b>Guruh sozlamalari</b>\nAvval sozlama turini tanlang.", reply_markup=kb)
     await call.answer()
 
 
 @router.callback_query(F.data.startswith("set:"))
 async def setting_choose_chat(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "settings.update"):
         return
     key = call.data.split(":", 1)[1]
     await state.update_data(setting_key=key)
@@ -749,6 +693,8 @@ async def setting_choose_chat(call: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("setting:page:"), SettingStates.choose_chat)
 async def setting_page(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "settings.update"):
+        return
     page = int(call.data.split(":")[2])
     await call.message.edit_reply_markup(reply_markup=await choose_chat_keyboard("setting", page))
     await call.answer()
@@ -756,6 +702,8 @@ async def setting_page(call: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("setting:chat:"), SettingStates.choose_chat)
 async def setting_chat_selected(call: types.CallbackQuery, state: FSMContext):
+    if await deny_if_no_permission(call, "settings.update"):
+        return
     chat_id = int(call.data.split(":")[2])
     data = await state.get_data()
     key = data["setting_key"]
@@ -777,7 +725,7 @@ async def setting_chat_selected(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(SettingStates.enter_value, F.text.regexp(r"^\d{1,5}$"))
 async def setting_save(message: types.Message, state: FSMContext):
-    if not is_super_admin(message.from_user.id):
+    if not await has_panel_access(message.from_user.id, "settings.update"):
         return
     data = await state.get_data()
     key = data.get("setting_key")
@@ -799,21 +747,25 @@ async def setting_save(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "wh:menu")
 async def whitelist_menu(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Foydalanuvchi qo‘shish", callback_data="wh:add:choose_chat")],
-        [InlineKeyboardButton(text="➖ Foydalanuvchini o‘chirish", callback_data="wh:rem:choose_chat")],
-        [InlineKeyboardButton(text="📃 Oq ro‘yxat", callback_data="wh:list")],
-        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
-    ])
+    if await deny_if_no_permission(call, "whitelist"):
+        return
+    perms = await get_admin_effective_permissions(call.from_user.id) if not is_super_admin(call.from_user.id) else set(PANEL_PERMISSIONS)
+    rows = []
+    if can_create(perms, "whitelist"):
+        rows.append([InlineKeyboardButton(text="➕ Foydalanuvchi qo‘shish", callback_data="wh:add:choose_chat")])
+    if can_delete(perms, "whitelist"):
+        rows.append([InlineKeyboardButton(text="➖ Foydalanuvchini o‘chirish", callback_data="wh:rem:choose_chat")])
+    if can_read(perms, "whitelist"):
+        rows.append([InlineKeyboardButton(text="📃 Oq ro‘yxat", callback_data="wh:list")])
+    rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+    kb = InlineKeyboardMarkup(inline_keyboard=rows)
     await call.message.edit_text("✅ <b>Oq ro‘yxat</b>\nBu ro‘yxatdagi foydalanuvchilarning fayllari bloklanmaydi.", reply_markup=kb)
     await call.answer()
 
 
 @router.callback_query(F.data == "wh:add:choose_chat")
 async def wh_add_choose_chat(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "whitelist.create"):
         return
     await state.set_state(WhitelistStates.add_choose_chat)
     await call.message.edit_text("Qaysi guruhga foydalanuvchi qo‘shiladi?", reply_markup=await choose_chat_keyboard("whadd", 0))
@@ -822,6 +774,8 @@ async def wh_add_choose_chat(call: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("whadd:chat:"), WhitelistStates.add_choose_chat)
 async def wh_add_got_chat(call: types.CallbackQuery, state: FSMContext):
+    if await deny_if_no_permission(call, "whitelist.create"):
+        return
     await state.update_data(chat_id=int(call.data.split(":")[2]))
     await state.set_state(WhitelistStates.add_enter_user)
     await call.message.edit_text("Foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
@@ -830,7 +784,7 @@ async def wh_add_got_chat(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(WhitelistStates.add_enter_user, F.text.regexp(r"^\d+$"))
 async def wh_add_user(message: types.Message, state: FSMContext):
-    if not is_super_admin(message.from_user.id):
+    if not await has_panel_access(message.from_user.id, "whitelist.create"):
         return
     data = await state.get_data()
     user_id = int(message.text)
@@ -841,7 +795,7 @@ async def wh_add_user(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "wh:rem:choose_chat")
 async def wh_rem_choose_chat(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "whitelist.delete"):
         return
     await state.set_state(WhitelistStates.rem_choose_chat)
     await call.message.edit_text("Qaysi guruhdan foydalanuvchi o‘chiriladi?", reply_markup=await choose_chat_keyboard("whrem", 0))
@@ -850,6 +804,8 @@ async def wh_rem_choose_chat(call: types.CallbackQuery, state: FSMContext):
 
 @router.callback_query(F.data.startswith("whrem:chat:"), WhitelistStates.rem_choose_chat)
 async def wh_rem_got_chat(call: types.CallbackQuery, state: FSMContext):
+    if await deny_if_no_permission(call, "whitelist.delete"):
+        return
     await state.update_data(chat_id=int(call.data.split(":")[2]))
     await state.set_state(WhitelistStates.rem_enter_user)
     await call.message.edit_text("O‘chiriladigan foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
@@ -858,7 +814,7 @@ async def wh_rem_got_chat(call: types.CallbackQuery, state: FSMContext):
 
 @router.message(WhitelistStates.rem_enter_user, F.text.regexp(r"^\d+$"))
 async def wh_remove_user(message: types.Message, state: FSMContext):
-    if not is_super_admin(message.from_user.id):
+    if not await has_panel_access(message.from_user.id, "whitelist.delete"):
         return
     data = await state.get_data()
     user_id = int(message.text)
@@ -869,7 +825,7 @@ async def wh_remove_user(message: types.Message, state: FSMContext):
 
 @router.callback_query(F.data == "wh:list")
 async def wh_list_all(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "whitelist.read"):
         return
     chats = await get_all_chats()
     text = "📃 <b>Guruhlar bo‘yicha oq ro‘yxat</b>\n\n"
@@ -887,37 +843,96 @@ async def wh_list_all(call: types.CallbackQuery):
     await call.answer()
 
 
+def broadcast_target_kb() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="👤 Faqat foydalanuvchilarga", callback_data="media:target:users")],
+        [InlineKeyboardButton(text="👥 Faqat guruhlarga", callback_data="media:target:chats")],
+        [InlineKeyboardButton(text="🌐 Hammaga", callback_data="media:target:all")],
+        [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")],
+    ])
+
+
 @router.callback_query(F.data == "media:start")
+async def ask_media_target(call: types.CallbackQuery, state: FSMContext):
+    if await deny_if_no_permission(call, "broadcast.action"):
+        return
+    await state.set_state(MediaState.choose_target)
+    await safe_edit_text(
+        call.message,
+        "🖼 <b>Ommaviy xabar</b>\n\n"
+        "Xabar qayerga yuborilsin?\n\n"
+        "• <b>Foydalanuvchilar</b> — botga /start bosgan shaxsiy userlar.\n"
+        "• <b>Guruhlar</b> — bot qo‘shilgan guruh/kanallar.\n"
+        "• <b>Hammaga</b> — ikkalasiga ham.\n\n"
+        "Keyingi qadamda yubormoqchi bo‘lgan xabaringizni tashlaysiz. Rasm, video, fayl va formatlangan matn copy holatida saqlanadi.",
+        reply_markup=broadcast_target_kb(),
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("media:target:"), MediaState.choose_target)
 async def ask_media_post(call: types.CallbackQuery, state: FSMContext):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "broadcast.action"):
+        return
+    target = call.data.split(":", 2)[2]
+    if target not in {"users", "chats", "all"}:
+        return await call.answer("Noto‘g‘ri yo‘nalish.", show_alert=True)
+    await state.update_data(broadcast_target=target)
     await state.set_state(MediaState.waiting_media)
-    await call.message.edit_text("Yuboriladigan xabarni, rasmni, videoni yoki faylni yuboring.", reply_markup=back_to_main_kb())
+    target_label = {"users": "foydalanuvchilarga", "chats": "guruhlarga", "all": "hammaga"}[target]
+    await safe_edit_text(
+        call.message,
+        f"✅ Yo‘nalish tanlandi: <b>{target_label}</b>.\n\n"
+        "Endi yuboriladigan xabarni tashlang.\n\n"
+        "Maslahat: Telegramda linklar chiroyli chiqishi uchun xabarni o‘zingiz formatlab yuboring. Men uni <b>copy_to</b> orqali aynan shu ko‘rinishda tarqataman.",
+        reply_markup=back_to_main_kb(),
+    )
     await call.answer()
 
 
 @router.message(MediaState.waiting_media)
 async def broadcast_media_post(message: types.Message, state: FSMContext):
-    if not is_super_admin(message.from_user.id):
+    if not await has_panel_access(message.from_user.id, "broadcast.action"):
         return
-    chats = await get_all_chats()
+
+    data = await state.get_data()
+    target = data.get("broadcast_target", "chats")
+    recipients: list[int] = []
+
+    if target in {"users", "all"}:
+        users = await get_all_users()
+        recipients.extend(int(user_id) for user_id, *_ in users if int(user_id) != message.from_user.id)
+
+    if target in {"chats", "all"}:
+        chats = await get_all_chats()
+        recipients.extend(int(chat_id) for chat_id, *_ in chats)
+
+    recipients = list(dict.fromkeys(recipients))
     sent = 0
     failed = 0
-    for chat_id, *_ in chats:
+
+    progress = await message.answer(f"⏳ Ommaviy yuborish boshlandi. Jami: <b>{len(recipients)}</b>")
+
+    for index, chat_id in enumerate(recipients, start=1):
         try:
             await message.copy_to(chat_id)
             sent += 1
-            await asyncio.sleep(0.05)
-        except Exception:
+        except Exception as exc:
+            logger.warning("Broadcast yuborilmadi. chat_id=%s error=%s", chat_id, exc)
             failed += 1
-    await message.answer(f"✅ Xabar yuborildi: {sent} ta\n❌ Xato: {failed} ta", reply_markup=back_to_main_kb())
+        await asyncio.sleep(0.07)
+
+        if index % 25 == 0:
+            await safe_edit_text(progress, f"⏳ Yuborilmoqda...\n✅ Yuborildi: <b>{sent}</b>\n❌ Xato: <b>{failed}</b>\n📌 Tekshirildi: <b>{index}/{len(recipients)}</b>")
+
+    await safe_edit_text(progress, f"✅ <b>Ommaviy xabar yakunlandi</b>\n\n📨 Yuborildi: <b>{sent}</b> ta\n❌ Xato: <b>{failed}</b> ta", reply_markup=back_to_main_kb())
     await state.clear()
 
 
 @router.callback_query(F.data.startswith("users:page:"))
 async def users_pagination(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
-        return await call.answer("⛔ Sizga ruxsat yo‘q.", show_alert=True)
+    if await deny_if_no_permission(call, "users.read"):
+        return
     page = int(call.data.split(":")[2])
     users = await get_all_users()
     if not users:
@@ -942,7 +957,7 @@ async def users_pagination(call: types.CallbackQuery):
 
 @router.callback_query(F.data.startswith("user:detail:"))
 async def user_detail(call: types.CallbackQuery):
-    if not is_super_admin(call.from_user.id):
+    if await deny_if_no_permission(call, "users.read"):
         return
     user_id = int(call.data.split(":")[2])
     user = await get_user_by_id(user_id)
@@ -963,113 +978,4 @@ async def user_detail(call: types.CallbackQuery):
     await call.answer()
 
 
-@router.message(F.content_type == "document")
-async def remove_unsafe_files(message: types.Message):
-    if message.chat.type not in {"group", "supergroup"} or not message.from_user or not message.document:
-        return
 
-    await add_or_update_user(message.from_user)
-
-    if await is_group_admin(message):
-        return
-    if await is_whitelisted(message.chat.id, message.from_user.id):
-        return
-
-    doc = message.document
-    filename = doc.file_name or "nomalum_fayl"
-    lower_name = filename.lower()
-    ext = get_document_ext(lower_name)
-    settings = await get_settings(message.chat.id)
-    unsafe_exts = set(await list_unsafe_extensions(message.chat.id))
-
-    reason = None
-    if ext in unsafe_exts:
-        reason = f"xavfli kengaytma: {ext}"
-    elif has_double_extension(lower_name):
-        reason = "ikki martalik kengaytma"
-    elif settings["block_archives"] and is_archive(lower_name):
-        reason = "arxiv fayl bloklangan"
-    elif doc.file_size and doc.file_size > settings["max_file_mb"] * 1024 * 1024:
-        reason = f"fayl hajmi {settings['max_file_mb']} MB dan katta"
-
-    if not reason:
-        return
-
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    await add_security_log(message.chat.id, message.from_user.id, "Fayl o‘chirildi", reason, filename)
-    warn_count = await add_warning(message.chat.id, message.from_user.id)
-
-    text = (
-        f"🦠 <a href='tg://user?id={message.from_user.id}'>{escape(message.from_user.full_name)}</a>, "
-        f"faylingiz o‘chirildi.\n"
-        f"Sabab: <b>{escape(reason)}</b>\n"
-        f"Ogohlantirish: <b>{warn_count}/{settings['max_warnings']}</b>"
-    )
-
-    if warn_count >= settings["max_warnings"]:
-        try:
-            await mute_user(message.bot, message.chat.id, message.from_user.id, settings["mute_minutes"])
-            await reset_warning(message.chat.id, message.from_user.id)
-            text += f"\n🔇 Limit oshgani uchun {settings['mute_minutes']} daqiqaga yozish cheklovi qo‘yildi."
-            await add_security_log(message.chat.id, message.from_user.id, "Mute", "fayl ogohlantirish limiti", filename)
-        except Exception as exc:
-            logger.exception("Mute xatosi: %s", exc)
-
-    info = await message.answer(text)
-    asyncio.create_task(delete_later(info, 10))
-
-
-@router.message((F.text | F.caption) & (F.chat.type.in_({"group", "supergroup"})))
-async def bad_words_guard(message: types.Message):
-    if not message.from_user:
-        return
-
-    await add_or_update_user(message.from_user)
-
-    if await is_group_admin(message):
-        return
-
-    text = message.text or message.caption or ""
-    words = await list_bad_words(message.chat.id)
-    if not contains_bad_word(text, words):
-        return
-
-    settings = await get_settings(message.chat.id)
-
-    try:
-        await message.delete()
-    except Exception:
-        pass
-
-    warn_count = await add_warning(message.chat.id, message.from_user.id)
-    await add_security_log(message.chat.id, message.from_user.id, "Xabar o‘chirildi", "yomon so‘z", "")
-
-    warn_text = (
-        f"🚫 <a href='tg://user?id={message.from_user.id}'>{escape(message.from_user.full_name)}</a>, "
-        f"guruh qoidalariga zid so‘z ishlatildi.\n"
-        f"Ogohlantirish: <b>{warn_count}/{settings['max_warnings']}</b>"
-    )
-
-    if warn_count >= settings["max_warnings"]:
-        try:
-            await mute_user(message.bot, message.chat.id, message.from_user.id, settings["mute_minutes"])
-            await reset_warning(message.chat.id, message.from_user.id)
-            warn_text += f"\n🔇 {settings['mute_minutes']} daqiqaga yozish cheklovi qo‘yildi."
-            await add_security_log(message.chat.id, message.from_user.id, "Mute", "yomon so‘z limiti", "")
-        except Exception as exc:
-            logger.exception("Mute xatosi: %s", exc)
-
-    warn = await message.answer(warn_text)
-    asyncio.create_task(delete_later(warn, 10))
-
-
-@router.message()
-async def collect_users_and_chats(message: types.Message):
-    if message.from_user:
-        await add_or_update_user(message.from_user)
-    if message.chat.type in {"group", "supergroup", "channel"}:
-        await add_or_update_chat(message.chat.id, message.chat.title or "Noma’lum", message.chat.type, await get_chat_link(message.chat), 0)

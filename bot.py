@@ -7,7 +7,7 @@ from aiogram.enums import ParseMode
 
 from config import BOT_TOKEN, LOG_LEVEL
 from database import init_db
-from handlers import admin
+from handlers import routers
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -24,7 +24,8 @@ dp = Dispatcher()
 
 async def main():
     await init_db()
-    dp.include_router(admin.router)
+    for router in routers:
+        dp.include_router(router)
     logger.info("🤖 Bot ishga tushdi...")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
