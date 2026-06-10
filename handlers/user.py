@@ -85,36 +85,36 @@ def demo_menu_kb() -> InlineKeyboardMarkup:
 
 FAQ_ITEMS = [
     (
-        "Bot guruhda ishlashi uchun nima kerak?",
-        "Bot guruhga qo‘shilgan va administrator qilingan bo‘lishi kerak. Tavsiya etiladigan asosiy ruxsatlar: xabarlarni o‘chirish va foydalanuvchilarni cheklash.",
+        "Bot guruhda ishlashi uchun nima qilish kerak?",
+        "Botni guruhga qo‘shing va guruh sozlamalarida administrator qiling. Shundan so‘ng bot guruh xavfsizligini kuzatishga yordam beradi.",
     ),
     (
         "Bot qanday himoya qiladi?",
-        "Bot guruhdagi zararli fayllar, shubhali xabarlar va taqiqlangan so‘zlarni aniqlashga yordam beradi. Zarurat bo‘lsa, qoidabuzarlarga avtomatik choralar qo‘llaydi.",
+        "Bot shubhali fayllar, nomaqbul so‘zlar, xavfli ko‘rinadigan xabarlar va firibgarlik urinishlarini kamaytirishga yordam beradi.",
     ),
     (
         ".apk, .exe va .bat fayllar nima uchun xavfli?",
-        "Bunday fayllar dastur ishga tushirishi mumkin. Agar manbasi ishonchli bo‘lmasa, ularni yuklab olish yoki ochish tavsiya etilmaydi.",
+        "Bunday fayllar qurilmada dastur ishga tushirishi mumkin. Manbasi ishonchli bo‘lmasa, ularni yuklab olish yoki ochish tavsiya etilmaydi.",
     ),
     (
-        "photo.jpg.apk nima uchun xavfli?",
-        "Bu fayl rasmga o‘xshab ko‘rinishi mumkin, ammo aslida dastur fayli bo‘lishi ehtimoli bor. Shu sababli bunday fayllarga ehtiyotkorlik bilan yondashish kerak.",
+        "photo.jpg.apk nima uchun shubhali?",
+        "Bu fayl nomi rasmga o‘xshab ko‘rinishi mumkin, lekin oxiridagi .apk uning dastur fayli bo‘lishi mumkinligini bildiradi.",
     ),
     (
-        "Noma’lum havolalarni ochish xavfsizmi?",
-        "Yo‘q. Havolani ochishdan oldin uning manbasi ishonchli ekanligini tekshiring. Shubhali havolalar firibgarlik yoki zararli saytga olib borishi mumkin.",
+        "Noma’lum havolani ochish xavfsizmi?",
+        "Yo‘q. Avval havolaning manbasini tekshiring. Shubhali havolalar soxta sayt, firibgarlik yoki zararli sahifaga olib borishi mumkin.",
     ),
     (
         "Kuchli parol qanday bo‘lishi kerak?",
-        "Kuchli parol katta va kichik harflar, raqamlar hamda maxsus belgilar aralashmasidan iborat bo‘lishi tavsiya etiladi.",
+        "Kuchli parol katta va kichik harflar, raqamlar hamda maxsus belgilar aralashmasidan iborat bo‘lgani yaxshi.",
     ),
     (
-        "Ikki bosqichli himoya (2FA) nima beradi?",
-        "2FA akkauntingizga qo‘shimcha himoya qo‘shadi va begona shaxslarning kirishini qiyinlashtiradi.",
+        "Ikki bosqichli himoya nima uchun kerak?",
+        "Ikki bosqichli himoya akkauntingizga qo‘shimcha xavfsizlik beradi. Parolingiz bilinib qolsa ham, begona odam kirishi qiyinlashadi.",
     ),
     (
-        "Bot oddiy foydalanuvchilar uchun nimaga kerak?",
-        "Bot orqali qo‘llanma o‘qish, xavfsizlik bo‘yicha tavsiyalar olish va qisqa testlar orqali bilimlarni tekshirish mumkin.",
+        "Bot foydalanuvchilar uchun nimaga kerak?",
+        "Bot orqali xavfsizlik bo‘yicha qo‘llanma o‘qish, misollarni ko‘rish va qisqa test orqali bilimni tekshirish mumkin.",
     ),
 ]
 
@@ -237,15 +237,14 @@ async def send_public_home(message_or_call, ref_code: str | None = None):
         ref_code = await get_user_referral_click(user_id)
 
     text = (
-        "👋 <b>Salom! Men guruhingizni himoya qiluvchi xavfsizlik botiman.</b>\n\n"
-        "Men guruhlarda spam, yomon so‘zlar, shubhali fayllar va firibgarlik urinishlarini kamaytirishga yordam beraman.\n\n"
-        "🛡 <b>Asosiy imkoniyatlar:</b>\n"
-        "• <code>.apk</code>, <code>.exe</code>, <code>.bat</code>, <code>.js</code> kabi xavfli fayllarni bloklash;\n"
-        "• <code>photo.jpg.apk</code> kabi yashirin kengaytmalarni aniqlash;\n"
-        "• yomon so‘zlarni o‘chirish;\n"
-        "• ogohlantirish va avtomatik mute;\n"
-        "• superadmin uchun maxfiy log guruhi;\n"
-        "• adminlarga aniq CRUD huquqlar berish.\n\n"
+        "👋 <b>Salom! Men guruh xavfsizligi uchun yordamchi botman.</b>\n\n"
+        "Men guruhlarda shubhali fayllar, nomaqbul so‘zlar va firibgarlik urinishlarini kamaytirishga yordam beraman.\n\n"
+        "🛡 <b>Nimalarga yordam beraman?</b>\n"
+        "• shubhali fayllarni aniqlash;\n"
+        "• ikki martalik fayl nomlarini sezish, masalan <code>photo.jpg.apk</code>;\n"
+        "• nomaqbul so‘zlarni nazorat qilish;\n"
+        "• guruh a’zolarini xavfsizlik bo‘yicha ogohlantirish;\n"
+        "• foydalanuvchilarga qisqa qo‘llanma va testlar berish.\n\n"
         "Boshlash uchun quyidagi tugmalardan foydalaning 👇"
     )
     if ref_code:
@@ -371,11 +370,31 @@ async def guide_detail(call: types.CallbackQuery):
     bot_username = (await call.bot.me()).username
     key = call.data.split(":", 1)[1]
     texts = {
-        "add": "1️⃣ <b>Botni guruhga qo‘shish</b>\n\nPastdagi <b>Guruhga qo‘shish</b> tugmasini bosing, kerakli guruhni tanlang va botni qo‘shing. Agar guruh ro‘yxatda chiqmasa, siz u guruhda admin emassiz yoki bot qo‘shish huquqingiz yo‘q.",
-        "rights": "2️⃣ <b>Admin huquqlarini berish</b>\n\nBot guruhni himoya qilishi uchun admin bo‘lishi shart. Eng kerakli huquqlar:\n\n• <b>Delete messages</b> — zararli fayl va yomon so‘zlarni o‘chirish;\n• <b>Restrict members</b> — qoidabuzarni mute qilish;\n• <b>Invite users</b> — referral/giper ssilka uchun;\n• <b>Pin messages</b> — kerak bo‘lsa ogohlantirishlarni mahkamlash.",
-        "panel": "3️⃣ <b>Panel sozlamalari</b>\n\nSuperadmin shaxsiy chatda /start bosadi va admin panelga kiradi. Paneldan yomon so‘zlar, xavfli fayllar, mute vaqti, ogohlantirish limiti, whitelist va admin huquqlarini boshqaradi.",
-        "files": "4️⃣ <b>Xavfli fayllar</b>\n\nPanelda <b>Xavfli fayllar</b> bo‘limiga kiring va kerakli kengaytmalarni qo‘shing:\n<code>.apk</code>, <code>.exe</code>, <code>.bat</code>, <code>.js</code>, <code>.cmd</code>, <code>.scr</code>.\n\nBot ikki martalik kengaytmalarni ham aniqlaydi: <code>rasm.jpg.apk</code>.",
-        "test": "5️⃣ <b>Tekshirib ko‘rish</b>\n\n1. Bot guruhda admin ekanini tekshiring.\n2. <code>.apk</code> kengaytmasini panelga qo‘shing.\n3. Guruhga test uchun <code>test.apk</code> nomli fayl yuboring.\n4. Bot faylni o‘chirishi va log yozishi kerak.\n\nAgar o‘chirmasa: Delete messages huquqi, kengaytma ro‘yxati va whitelistni tekshiring.",
+        "add": (
+            "1️⃣ <b>Botni guruhga qo‘shish</b>\n\n"
+            "Pastdagi <b>Guruhga qo‘shish</b> tugmasini bosing va kerakli guruhni tanlang.\n\n"
+            "Agar guruh ro‘yxatda chiqmasa, sizda o‘sha guruhga bot qo‘shish huquqi bo‘lmasligi mumkin."
+        ),
+        "rights": (
+            "2️⃣ <b>Botni ishga tayyorlash</b>\n\n"
+            "Bot guruhni yaxshi himoya qilishi uchun unga kerakli ruxsatlarni bering.\n\n"
+            "Shundan so‘ng bot zararli fayllar, shubhali xabarlar va qoidabuzarliklarni aniqlashga yordam beradi."
+        ),
+        "panel": (
+            "3️⃣ <b>Botdan foydalanish</b>\n\n"
+            "Bot guruhdagi xavfsizlikni avtomatik kuzatadi.\n\n"
+            "Foydalanuvchilar qo‘llanmani o‘qishi, xavfsizlik bo‘yicha maslahatlar olishi va test orqali bilimini tekshirishi mumkin."
+        ),
+        "files": (
+            "4️⃣ <b>Xavfli fayllardan ehtiyot bo‘ling</b>\n\n"
+            "<code>.apk</code>, <code>.exe</code>, <code>.bat</code>, <code>.js</code> kabi fayllar zararli bo‘lishi mumkin.\n\n"
+            "Ayniqsa <code>photo.jpg.apk</code> kabi nomlangan fayllarga ehtiyot bo‘ling. Ular rasmga o‘xshab ko‘rinsa ham, aslida dastur bo‘lishi mumkin."
+        ),
+        "test": (
+            "5️⃣ <b>Xavfsizlik bilimlarini tekshirish</b>\n\n"
+            "Bot ichidagi qisqa test orqali shubhali fayllar, havolalar, parollar va firibgarlik holatlari bo‘yicha bilimingizni sinab ko‘rishingiz mumkin.\n\n"
+            "Test oddiy va foydali savollardan iborat."
+        ),
     }
     await safe_edit_text(call.message, texts.get(key, "Ma’lumot topilmadi."), reply_markup=public_back_kb(bot_username, "pub:guide"))
     await call.answer()
@@ -392,11 +411,21 @@ async def demo_detail(call: types.CallbackQuery):
     bot_username = (await call.bot.me()).username
     key = call.data.split(":", 1)[1]
     texts = {
-        "file": "🦠 <b>Zararli fayl misoli</b>\n\nFoydalanuvchi guruhga <code>game.apk</code> yubordi. Agar <code>.apk</code> xavfli ro‘yxatda bo‘lsa:\n\n1. bot faylni aniqlaydi;\n2. maxfiy guruhga ma’lumot yuboradi;\n3. asl guruhdan faylni o‘chiradi;\n4. logga yozadi.",
-        "word": "🚫 <b>Yomon so‘z nazorati</b>\n\nTaqiqlangan so‘zlar paneldan qo‘shiladi. Kimdir shu so‘zni yozsa, bot xabarni o‘chiradi, foydalanuvchiga ogohlantirish beradi va log yozadi.",
-        "mute": "🔇 <b>Ogohlantirish va mute</b>\n\nMasalan limit 3 bo‘lsa, foydalanuvchi 3-marta qoida buzganida vaqtincha yozishdan cheklanadi. Mute vaqti paneldan belgilanadi.",
-        "secret": "🔐 <b>Maxfiy guruh logi</b>\n\nSuperadmin maxfiy guruhni ulaydi. Shundan keyin zararli fayl ushlansa, bot maxfiy guruhga kim tashlagani, qaysi guruhdanligi, fayl nomi va sababini yuboradi.",
-        "admin": "👮 <b>Admin huquqlari</b>\n\nSuperadmin adminlarga faqat kerakli CRUD huquqlarni beradi. Masalan admin faqat <b>read</b> olsa, ko‘radi, lekin yaratmaydi. Yaratish uchun <b>create</b> kerak.",
+        "file": (
+            "🦠 <b>Shubhali fayl misoli</b>\n\n"
+            "Kimdir guruhga <code>game.apk</code> yoki <code>photo.jpg.apk</code> yuborsa, bu xavfli bo‘lishi mumkin.\n\n"
+            "Bunday fayllarni ochishdan oldin manbasini tekshirish kerak."
+        ),
+        "word": (
+            "🚫 <b>Nomaqbul so‘zlar nazorati</b>\n\n"
+            "Guruhda haqorat, spam yoki nomaqbul so‘zlar ko‘payib ketsa, bot ularni kamaytirishga yordam beradi.\n\n"
+            "Bu guruh muhitini toza va xavfsiz saqlashga xizmat qiladi."
+        ),
+        "warn": (
+            "⚠️ <b>Ogohlantirish misoli</b>\n\n"
+            "Agar foydalanuvchi qayta-qayta qoida buzsa, bot uni ogohlantiradi.\n\n"
+            "Bu guruh a’zolariga qoidalarga rioya qilishni eslatadi."
+        ),
     }
     await safe_edit_text(call.message, texts.get(key, "Demo topilmadi."), reply_markup=public_back_kb(bot_username, "pub:demo"))
     await call.answer()
@@ -408,10 +437,11 @@ async def public_features(call: types.CallbackQuery):
     await safe_edit_text(
         call.message,
         "⚙️ <b>Bot imkoniyatlari</b>\n\n"
-        "🛡 <b>Guruh himoyasi:</b> yomon so‘zlar, xavfli fayllar, ikki martalik kengaytma, katta fayl va arxiv nazorati.\n\n"
-        "👮 <b>Admin panel:</b> superadmin, adminlar, rollar, CRUD huquqlar, vaqtinchalik admin, audit log.\n\n"
-        "🔐 <b>Monitoring:</b> maxfiy guruhga zararli fayl haqida xabar va batafsil log.\n\n"
-        "📢 <b>Ommaviy xabar:</b> foydalanuvchilar, guruhlar yoki hammaga format saqlangan holda yuborish.",
+        "🛡 Shubhali fayllarni aniqlashga yordam beradi.\n"
+        "🔗 Xavfli havolalardan ehtiyot bo‘lishni eslatadi.\n"
+        "🚫 Nomaqbul so‘zlar va spamni kamaytirishga yordam beradi.\n"
+        "📖 Foydalanuvchilar uchun qo‘llanma beradi.\n"
+        "🧪 Xavfsizlik bo‘yicha qisqa test orqali bilimni tekshiradi.",
         reply_markup=public_back_kb(bot_username),
     )
     await call.answer()
@@ -423,14 +453,12 @@ async def public_support(call: types.CallbackQuery):
     await safe_edit_text(
         call.message,
         "🆘 <b>Yordam</b>\n\n"
-        "Agar bot ishlamasa, quyidagilarni tekshiring:\n\n"
-        "1. Bot guruhda adminmi?\n"
-        "2. Delete messages huquqi bormi?\n"
-        "3. Xavfli kengaytma panelga qo‘shilganmi?\n"
-        "4. Fayl tashlagan odam whitelistda emasmi?\n"
-        "5. Bot serverda ishlab turibdimi?\n"
-        "6. Maxfiy guruh ulanganmi?\n\n"
-        "Ko‘p uchraydigan xato: Telegram network timeout. Bunda fayl maxfiy guruhga yuborilmasligi mumkin, lekin kod faylni guruhdan baribir o‘chirishi kerak.",
+        "Agar bot guruhda ishlamayotgandek ko‘rinsa, quyidagilarni tekshiring:\n\n"
+        "1. Bot guruhga qo‘shilganmi?\n"
+        "2. Bot guruhda administrator qilinganmi?\n"
+        "3. Botdan foydalanish uchun internet aloqasi barqarormi?\n"
+        "4. Guruhda botga xabar yuborish imkoniyati bormi?\n\n"
+        "Muammo davom etsa, bot egasi yoki guruh mas’uli bilan bog‘laning.",
         reply_markup=public_back_kb(bot_username),
     )
     await call.answer()
