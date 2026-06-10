@@ -126,12 +126,11 @@ async def referral_list(call: types.CallbackQuery):
         public_url = referral_private_url(bot_username, code)
         text += (
             f"{number}. 🔹 <b>{escape(name)}</b>\n"
-            f"👥 Qo‘shilgan guruh/kanallar: <b>{groups_count}</b>\n"
-            f"🛡 Bot admin bo‘lganlari: <b>{admin_count}</b>\n"
+            f"🛡 Bot admin bo‘lgan guruh/kanallar: <b>{admin_count}</b>\n"
             f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
-            text=f"📄 {number}. {name[:30]} ({groups_count})",
+            text=f"📄 {number}. {name[:30]} ({admin_count})",
             callback_data=f"ref:detail:{link_id}:0:{page}"
         )])
 
@@ -161,7 +160,8 @@ async def referral_detail(call: types.CallbackQuery):
     await refresh_referral_statuses(call.bot, link_id)
     stats_rows = await get_referral_stats()
     current_link = next((row for row in stats_rows if row[0] == link_id), None)
-    chats = await get_referral_chats(link_id)
+    all_chats = await get_referral_chats(link_id)
+    chats = [row for row in all_chats if row[3] == 1]
     total = len(chats)
 
     max_page = max((total - 1) // REF_GROUPS_PER_PAGE, 0)
@@ -175,13 +175,13 @@ async def referral_detail(call: types.CallbackQuery):
         text = (
             f"📄 <b>{escape(link_name)}</b> orqali qo‘shilgan guruhlar\n"
             f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | "
-            f"Jami: <b>{groups_count}</b> | Admin: <b>{admin_count}</b>\n\n"
+            f"Bot admin bo‘lganlari: <b>{admin_count}</b>\n\n"
         )
     else:
         text = "📄 <b>Ssilka orqali qo‘shilgan guruhlar</b>\n\n"
 
     if not chats:
-        text += "Bu ssilka orqali hali guruh qo‘shilmagan."
+        text += "Bu ssilka orqali bot admin qilingan guruh/kanal topilmadi."
     else:
         for number, row in enumerate(page_chats, start=start + 1):
             chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row
@@ -210,11 +210,51 @@ async def referral_detail(call: types.CallbackQuery):
     if action_row:
         kb_rows.append(action_row)
 
+    kb_rows.append([
+        InlineKeyboardButton(text="📄 TXT yuklab olish", callback_data=f"ref:export:txt:{link_id}:{back_page}"),
+        InlineKeyboardButton(text="📕 PDF yuklab olish", callback_data=f"ref:export:pdf:{link_id}:{back_page}"),
+    ])
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
     await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("ref:export:"))
+async def referral_export_handler(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "referrals.read"):
+        return
+
+    parts = call.data.split(":")
+    export_type = parts[2]
+    link_id = int(parts[3])
+    back_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
+
+    await refresh_referral_statuses(call.bot, link_id)
+    link = await get_referral_link_by_id(link_id)
+    if not link:
+        await call.answer("❌ Ssilka topilmadi.", show_alert=True)
+        return
+
+    _, link_name, code, _, _ = link
+    bot_username = (await call.bot.me()).username
+    public_url = referral_private_url(bot_username, code)
+    chats = [row for row in await get_referral_chats(link_id) if row[3] == 1]
+
+    safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(link_name or link_id)).strip("_")[:40] or str(link_id)
+    if export_type == "txt":
+        file_path = export_referral_chats_to_txt(link_name, public_url, chats, filename=f"referral_{link_id}_{safe_name}.txt")
+        caption = "✅ TXT tayyor."
+    elif export_type == "pdf":
+        file_path = export_referral_chats_to_pdf(link_name, public_url, chats, filename=f"referral_{link_id}_{safe_name}.pdf")
+        caption = "✅ PDF tayyor."
+    else:
+        await call.answer("❌ Noto‘g‘ri export turi.", show_alert=True)
+        return
+
+    await call.message.answer_document(types.FSInputFile(file_path), caption=caption)
+    await call.answer("✅ Fayl yuborildi")
 
 
 @router.callback_query(F.data.startswith("ref:edit:"))

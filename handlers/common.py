@@ -85,7 +85,7 @@ from database import (
     get_private_log_chat_id,
     get_stats_summary,
 )
-from utils.file_export import export_chats_to_pdf, export_chats_to_txt
+from utils.file_export import export_chats_to_pdf, export_chats_to_txt, export_referral_chats_to_pdf, export_referral_chats_to_txt
 
 logger = logging.getLogger(__name__)
 
