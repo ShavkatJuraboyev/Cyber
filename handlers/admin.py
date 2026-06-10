@@ -51,7 +51,7 @@ async def referral_menu(call: types.CallbackQuery, state: FSMContext):
         return
 
     await state.clear()
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         "🔗 <b>Giper ssilkalar</b>\n\n"
         "Bu yerda botni guruhlarga qo‘shish uchun cheksiz havola yaratish va har bir havola statistikalarini ko‘rish mumkin.",
         reply_markup=await referral_menu_kb(call.from_user.id)
@@ -64,7 +64,7 @@ async def referral_create_start(call: types.CallbackQuery, state: FSMContext):
     if await deny_if_no_permission(call, "referrals.create"):
         return
     await state.set_state(ReferralStates.enter_name)
-    await call.message.edit_text("Yangi ssilka nomini yuboring. Masalan: <b>Instagram reklama</b>", reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, "Yangi ssilka nomini yuboring. Masalan: <b>Instagram reklama</b>", reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -106,7 +106,7 @@ async def referral_list(call: types.CallbackQuery):
     rows = await get_referral_stats()
     total = len(rows)
     if not rows:
-        await call.message.edit_text("🔗 Hozircha ssilka yaratilmagan.", reply_markup=await referral_menu_kb(call.from_user.id))
+        await safe_edit_text(call.message, "🔗 Hozircha ssilka yaratilmagan.", reply_markup=await referral_menu_kb(call.from_user.id))
         return await call.answer()
 
     max_page = max((total - 1) // REF_LINKS_PER_PAGE, 0)
@@ -143,7 +143,7 @@ async def referral_list(call: types.CallbackQuery):
         kb_rows.append(nav)
 
     kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")])
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -217,7 +217,7 @@ async def referral_detail(call: types.CallbackQuery):
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -272,7 +272,7 @@ async def referral_edit_start(call: types.CallbackQuery, state: FSMContext):
 
     await state.update_data(ref_edit_link_id=link_id, ref_edit_back_page=back_page)
     await state.set_state(ReferralStates.edit_name)
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         f"✏️ Hozirgi nomi: <b>{escape(link[1])}</b>\n\nYangi nomni yuboring:",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data=f"ref:detail:{link_id}:0:{back_page}")]
@@ -314,7 +314,7 @@ async def referral_delete_ask(call: types.CallbackQuery):
         await call.answer("❌ Ssilka topilmadi.", show_alert=True)
         return
 
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         f"🗑 <b>{escape(link[1])}</b> ssilkasini o‘chirasizmi?\n\n"
         "Bu faqat ssilka va unga bog‘langan statistikani o‘chiradi. Guruhlar bazadan o‘chmaydi.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -335,7 +335,7 @@ async def referral_delete_finish(call: types.CallbackQuery):
     back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
     ok = await delete_referral_link(link_id)
     await call.answer("✅ O‘chirildi." if ok else "❌ Ssilka topilmadi.", show_alert=True)
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         "✅ Giper ssilka o‘chirildi." if ok else "❌ Ssilka topilmadi.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="📊 Statistikaga qaytish", callback_data=f"ref:list:{back_page}")],
@@ -355,7 +355,7 @@ async def referral_unlinked_chats(call: types.CallbackQuery):
     total = len(chats)
 
     if not chats:
-        await call.message.edit_text(
+        await safe_edit_text(call.message, 
             "✅ Hamma saqlangan guruh/kanallar referral ssilkaga biriktirilgan.",
             reply_markup=await referral_menu_kb(call.from_user.id)
         )
@@ -390,7 +390,7 @@ async def referral_unlinked_chats(call: types.CallbackQuery):
         kb_rows.append(nav)
     kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")])
 
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -405,7 +405,7 @@ async def referral_pick_chat(call: types.CallbackQuery):
     links = await get_referral_stats()
 
     if not links:
-        await call.message.edit_text("🔗 Avval giper ssilka yarating.", reply_markup=await referral_menu_kb(call.from_user.id))
+        await safe_edit_text(call.message, "🔗 Avval giper ssilka yarating.", reply_markup=await referral_menu_kb(call.from_user.id))
         return await call.answer()
 
     rows = []
@@ -416,7 +416,7 @@ async def referral_pick_chat(call: types.CallbackQuery):
         )])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=f"ref:unlinked:{back_page}")])
 
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         "Qaysi giper ssilkaga biriktirasiz?",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=rows)
     )
@@ -434,7 +434,7 @@ async def referral_assign_chat(call: types.CallbackQuery):
     back_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
     ok = await assign_chat_to_referral(link_id, chat_id)
     await call.answer("✅ Biriktirildi." if ok else "❌ Biriktirib bo‘lmadi.", show_alert=True)
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         "✅ Guruh/kanal ssilkaga biriktirildi." if ok else "❌ Guruh yoki ssilka topilmadi.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Biriktirilmaganlarga qaytish", callback_data=f"ref:unlinked:{back_page}")],
@@ -445,7 +445,7 @@ async def referral_assign_chat(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "help_info")
 async def show_help(call: types.CallbackQuery):
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         "📖 <b>Qo‘llanma</b>\n\n"
         "1️⃣ Botni guruhingizga qo‘shing.\n"
         "2️⃣ Botni administrator qiling va xabarlarni o‘chirish hamda foydalanuvchilarni cheklash huquqlarini bering.\n"
@@ -462,7 +462,7 @@ async def go_main_menu(call: types.CallbackQuery, state: FSMContext):
     if await deny_if_no_permission(call):
         return
     await state.clear()
-    await call.message.edit_text("🏠 <b>Asosiy menyu</b>", reply_markup=await panel_menu_kb(call.from_user.id))
+    await safe_edit_text(call.message, "🏠 <b>Asosiy menyu</b>", reply_markup=await panel_menu_kb(call.from_user.id))
     await call.answer()
 
 @router.callback_query(F.data == "stats")
@@ -500,7 +500,7 @@ async def chats_page_handler(call: types.CallbackQuery):
     total = len(chats)
 
     if not chats:
-        await call.message.edit_text("📋 Hozircha guruh yoki kanal yo‘q.", reply_markup=stats_kb())
+        await safe_edit_text(call.message, "📋 Hozircha guruh yoki kanal yo‘q.", reply_markup=stats_kb())
         return await call.answer()
 
     max_page = max((total - 1) // CHATS_PER_PAGE, 0)
@@ -534,7 +534,7 @@ async def chats_page_handler(call: types.CallbackQuery):
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data="stats")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -551,7 +551,7 @@ async def chat_detail_handler(call: types.CallbackQuery):
     chats = await get_all_chats()
     row = next((c for c in chats if c[0] == chat_id), None)
     if not row:
-        await call.message.edit_text("❌ Bu chat bazadan topilmadi.", reply_markup=stats_kb())
+        await safe_edit_text(call.message, "❌ Bu chat bazadan topilmadi.", reply_markup=stats_kb())
         return await call.answer()
 
     chat_id, title, chat_type, invite_link, is_admin, bot_status = row
@@ -576,7 +576,7 @@ async def chat_detail_handler(call: types.CallbackQuery):
         [InlineKeyboardButton(text="⬅️ Ro‘yxatga qaytish", callback_data=f"chats:page:{back_page}")],
         [InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")],
     ])
-    await call.message.edit_text(text, reply_markup=kb)
+    await safe_edit_text(call.message, text, reply_markup=kb)
     await call.answer()
 
 
@@ -590,7 +590,7 @@ async def chat_delete_handler(call: types.CallbackQuery):
     back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
     deleted = await delete_chat(chat_id)
     await call.answer("✅ Bazadan o‘chirildi." if deleted else "❌ Bazada topilmadi.", show_alert=True)
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         "✅ Chat bazadan o‘chirildi." if deleted else "❌ Chat bazada topilmadi.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Ro‘yxatga qaytish", callback_data=f"chats:page:{back_page}")],
@@ -614,7 +614,7 @@ async def logs_handler(call: types.CallbackQuery):
                 f"  Chat: <code>{chat_id}</code> | User: <code>{user_id}</code>\n"
                 f"  Fayl: {escape(file_name or '—')} | {created_at}\n\n"
             )
-    await call.message.edit_text(text, reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -663,7 +663,7 @@ async def bad_words_menu(call: types.CallbackQuery):
         ])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    await call.message.edit_text("🛡 <b>Yomon so‘zlar boshqaruvi</b>", reply_markup=kb)
+    await safe_edit_text(call.message, "🛡 <b>Yomon so‘zlar boshqaruvi</b>", reply_markup=kb)
     await call.answer()
 
 
@@ -675,7 +675,7 @@ async def bw_add_prompt(call: types.CallbackQuery, state: FSMContext):
     elif not await is_group_admin(call):
         return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
     await state.set_state(BadWordStates.add_words)
-    await call.message.edit_text("Qo‘shiladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, "Qo‘shiladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -706,7 +706,7 @@ async def bw_remove_prompt(call: types.CallbackQuery, state: FSMContext):
     elif not await is_group_admin(call):
         return await call.answer("⛔ Ruxsat yo‘q.", show_alert=True)
     await state.set_state(BadWordStates.remove_words)
-    await call.message.edit_text("O‘chiriladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, "O‘chiriladigan so‘zlarni vergul yoki yangi qatorda yuboring.", reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -741,7 +741,7 @@ async def list_words(call: types.CallbackQuery):
     words = await list_bad_words(chat_id)
     title = "Global yomon so‘zlar" if chat_id is None else "Ushbu chatdagi yomon so‘zlar"
     text = f"📃 <b>{title}</b>\n\n" + ("\n".join(f"• {escape(w)}" for w in words) if words else "Ro‘yxat bo‘sh.")
-    await call.message.edit_text(text, reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -760,7 +760,7 @@ async def ext_menu(call: types.CallbackQuery):
         rows.append([InlineKeyboardButton(text="📃 Ro‘yxat", callback_data="ext:list")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    await call.message.edit_text("🦠 <b>Xavfli fayl kengaytmalari</b>", reply_markup=kb)
+    await safe_edit_text(call.message, "🦠 <b>Xavfli fayl kengaytmalari</b>", reply_markup=kb)
     await call.answer()
 
 
@@ -769,7 +769,7 @@ async def ext_add_prompt(call: types.CallbackQuery, state: FSMContext):
     if await deny_if_no_permission(call, "extensions.create"):
         return
     await state.set_state(ExtStates.add_ext)
-    await call.message.edit_text("Qo‘shiladigan kengaytmalarni yuboring. Masalan: <code>.exe, .apk, .js</code>", reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, "Qo‘shiladigan kengaytmalarni yuboring. Masalan: <code>.exe, .apk, .js</code>", reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -788,7 +788,7 @@ async def ext_remove_prompt(call: types.CallbackQuery, state: FSMContext):
     if await deny_if_no_permission(call, "extensions.delete"):
         return
     await state.set_state(ExtStates.remove_ext)
-    await call.message.edit_text("O‘chiriladigan kengaytmalarni yuboring.", reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, "O‘chiriladigan kengaytmalarni yuboring.", reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -826,7 +826,7 @@ async def ext_list(call: types.CallbackQuery):
         return
     exts = await list_unsafe_extensions(None)
     text = "🦠 <b>Xavfli kengaytmalar</b>\n\n" + ("\n".join(f"• <code>{escape(e)}</code>" for e in exts) if exts else "Ro‘yxat bo‘sh.")
-    await call.message.edit_text(text, reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -847,7 +847,7 @@ async def settings_menu(call: types.CallbackQuery):
         rows.append([InlineKeyboardButton(text="⛔ Faqat ko‘rish huquqida sozlama o‘zgartirib bo‘lmaydi", callback_data="noop")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    await call.message.edit_text("⚙️ <b>Guruh sozlamalari</b>\nAvval sozlama turini tanlang.", reply_markup=kb)
+    await safe_edit_text(call.message, "⚙️ <b>Guruh sozlamalari</b>\nAvval sozlama turini tanlang.", reply_markup=kb)
     await call.answer()
 
 
@@ -858,7 +858,7 @@ async def setting_choose_chat(call: types.CallbackQuery, state: FSMContext):
     key = call.data.split(":", 1)[1]
     await state.update_data(setting_key=key)
     await state.set_state(SettingStates.choose_chat)
-    await call.message.edit_text("Qaysi guruh uchun sozlama o‘zgartiriladi?", reply_markup=await choose_chat_keyboard("setting", 0))
+    await safe_edit_text(call.message, "Qaysi guruh uchun sozlama o‘zgartiriladi?", reply_markup=await choose_chat_keyboard("setting", 0))
     await call.answer()
 
 
@@ -886,7 +886,7 @@ async def setting_all_selected(call: types.CallbackQuery, state: FSMContext):
         "block_archives": "Arxivlarni bloklash: 1 = ha, 0 = yo‘q",
     }
     await state.set_state(SettingStates.enter_value)
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         f"🌐 <b>Barcha guruh/kanallar uchun</b>\n"
         f"Joriy umumiy qiymat: <code>{settings[key]}</code>\n\n"
         f"{labels[key]} uchun yangi qiymat yuboring. Bu qiymat bazadagi barcha guruhlarga va keyin qo‘shiladigan yangi guruhlarga ham qo‘llanadi.",
@@ -911,7 +911,7 @@ async def setting_chat_selected(call: types.CallbackQuery, state: FSMContext):
         "block_archives": "Arxivlarni bloklash: 1 = ha, 0 = yo‘q",
     }
     await state.set_state(SettingStates.enter_value)
-    await call.message.edit_text(
+    await safe_edit_text(call.message, 
         f"Joriy qiymat: <code>{settings[key]}</code>\n\n{labels[key]} uchun yangi qiymat yuboring.",
         reply_markup=back_to_settings_kb()
     )
@@ -964,7 +964,7 @@ async def whitelist_menu(call: types.CallbackQuery):
         rows.append([InlineKeyboardButton(text="📃 Oq ro‘yxat", callback_data="wh:list")])
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
     kb = InlineKeyboardMarkup(inline_keyboard=rows)
-    await call.message.edit_text("✅ <b>Oq ro‘yxat</b>\nBu ro‘yxatdagi foydalanuvchilarning fayllari bloklanmaydi.", reply_markup=kb)
+    await safe_edit_text(call.message, "✅ <b>Oq ro‘yxat</b>\nBu ro‘yxatdagi foydalanuvchilarning fayllari bloklanmaydi.", reply_markup=kb)
     await call.answer()
 
 
@@ -973,7 +973,7 @@ async def wh_add_choose_chat(call: types.CallbackQuery, state: FSMContext):
     if await deny_if_no_permission(call, "whitelist.create"):
         return
     await state.set_state(WhitelistStates.add_choose_chat)
-    await call.message.edit_text("Qaysi guruhga foydalanuvchi qo‘shiladi?", reply_markup=await choose_chat_keyboard("whadd", 0))
+    await safe_edit_text(call.message, "Qaysi guruhga foydalanuvchi qo‘shiladi?", reply_markup=await choose_chat_keyboard("whadd", 0))
     await call.answer()
 
 
@@ -983,7 +983,7 @@ async def wh_add_got_chat(call: types.CallbackQuery, state: FSMContext):
         return
     await state.update_data(chat_id=int(call.data.split(":")[2]))
     await state.set_state(WhitelistStates.add_enter_user)
-    await call.message.edit_text("Foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, "Foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -1003,7 +1003,7 @@ async def wh_rem_choose_chat(call: types.CallbackQuery, state: FSMContext):
     if await deny_if_no_permission(call, "whitelist.delete"):
         return
     await state.set_state(WhitelistStates.rem_choose_chat)
-    await call.message.edit_text("Qaysi guruhdan foydalanuvchi o‘chiriladi?", reply_markup=await choose_chat_keyboard("whrem", 0))
+    await safe_edit_text(call.message, "Qaysi guruhdan foydalanuvchi o‘chiriladi?", reply_markup=await choose_chat_keyboard("whrem", 0))
     await call.answer()
 
 
@@ -1013,7 +1013,7 @@ async def wh_rem_got_chat(call: types.CallbackQuery, state: FSMContext):
         return
     await state.update_data(chat_id=int(call.data.split(":")[2]))
     await state.set_state(WhitelistStates.rem_enter_user)
-    await call.message.edit_text("O‘chiriladigan foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, "O‘chiriladigan foydalanuvchi ID raqamini yuboring.", reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -1044,7 +1044,7 @@ async def wh_list_all(call: types.CallbackQuery):
         text += "\n".join(f"   • <code>{u}</code>" for u in users) + "\n\n"
     if not found:
         text += "Hozircha ruxsatli foydalanuvchi yo‘q."
-    await call.message.edit_text(text, reply_markup=back_to_main_kb())
+    await safe_edit_text(call.message, text, reply_markup=back_to_main_kb())
     await call.answer()
 
 
@@ -1141,7 +1141,7 @@ async def users_pagination(call: types.CallbackQuery):
     page = int(call.data.split(":")[2])
     users = await get_all_users()
     if not users:
-        return await call.message.edit_text("👥 Hozircha foydalanuvchilar yo‘q.", reply_markup=back_to_main_kb())
+        return await safe_edit_text(call.message, "👥 Hozircha foydalanuvchilar yo‘q.", reply_markup=back_to_main_kb())
     start = page * USERS_PER_PAGE
     end = start + USERS_PER_PAGE
     rows = []
@@ -1156,7 +1156,7 @@ async def users_pagination(call: types.CallbackQuery):
     if nav:
         rows.append(nav)
     rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
-    await call.message.edit_text(f"👥 <b>Foydalanuvchilar</b>\nJami: <b>{len(users)}</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    await safe_edit_text(call.message, f"👥 <b>Foydalanuvchilar</b>\nJami: <b>{len(users)}</b>", reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
     await call.answer()
 
 
@@ -1177,7 +1177,7 @@ async def user_detail(call: types.CallbackQuery):
         f"🌐 Til: {escape(user[4] or '—')}\n"
         f"📅 Qo‘shilgan: {escape(user[5] or '—')}"
     )
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+    await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="users:page:0")]
     ]))
     await call.answer()

@@ -91,12 +91,15 @@ logger = logging.getLogger(__name__)
 
 
 async def safe_edit_text(message: types.Message, text: str, reply_markup=None, **kwargs):
-    """Telegram "message is not modified" xatosini yutib yuboradi."""
+    """edit_text ishlamasa bot yiqilmasin: eski/o‘chgan xabarda yangi xabar yuboradi."""
     try:
         return await message.edit_text(text, reply_markup=reply_markup, **kwargs)
     except TelegramBadRequest as exc:
-        if "message is not modified" in str(exc):
+        err = str(exc).lower()
+        if "message is not modified" in err:
             return None
+        if "message to edit not found" in err or "message can't be edited" in err or "message identifier is not specified" in err:
+            return await message.answer(text, reply_markup=reply_markup, **kwargs)
         raise
 
 USERS_PER_PAGE = 10
