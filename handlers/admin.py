@@ -23,7 +23,7 @@ async def referral_menu_kb(user_id: int) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="➕ Yangi giper ssilka", callback_data="ref:create")])
     if can_read(perms, "referrals"):
         rows.append([InlineKeyboardButton(text="📊 Ssilka statistikasi", callback_data="ref:list")])
-        rows.append([InlineKeyboardButton(text="🧩 Biriktirilmagan guruhlar", callback_data="ref:unlinked:0")])
+        # rows.append([InlineKeyboardButton(text="🧩 Biriktirilmagan guruhlar", callback_data="ref:unlinked:0")])
     rows.append([InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
