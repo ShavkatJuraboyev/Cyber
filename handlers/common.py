@@ -43,6 +43,9 @@ from database import (
     add_security_log,
     add_unsafe_extension,
     create_referral_link,
+    get_referral_link_by_id,
+    update_referral_link_name,
+    delete_referral_link,
     add_warning,
     add_whitelist_user,
     get_all_chats,
@@ -64,6 +67,8 @@ from database import (
     remove_unsafe_extension,
     remove_unsafe_all_extensions,
     track_referral_chat,
+    save_user_referral_click,
+    track_referral_chat_by_user,
     remove_whitelist_user,
     reset_warning,
     set_mute_minutes,
@@ -75,6 +80,7 @@ from database import (
     get_admin_audit_logs,
     set_private_log_chat_id,
     get_private_log_chat_id,
+    get_stats_summary,
 )
 from utils.file_export import export_chats_to_pdf, export_chats_to_txt
 
@@ -131,6 +137,7 @@ class MediaState(StatesGroup):
 
 class ReferralStates(StatesGroup):
     enter_name = State()
+    edit_name = State()
 
 
 class PanelAdminStates(StatesGroup):
@@ -178,7 +185,7 @@ PANEL_PERMISSIONS = {
 ROLE_TEMPLATES = {
     "read_only": {"name": "Read only", "perms": [f"{m}.read" for m in PANEL_MODULES]},
     "moderator": {"name": "Moderator", "perms": ["stats.read", "logs.read", "bad_words.read", "bad_words.create", "bad_words.delete", "extensions.read", "extensions.create", "extensions.delete", "whitelist.read", "whitelist.create", "whitelist.delete"]},
-    "referral_manager": {"name": "Referral manager", "perms": ["referrals.read", "referrals.create", "referrals.update", "chats.read", "stats.read"]},
+    "referral_manager": {"name": "Referral manager", "perms": ["referrals.read", "referrals.create", "referrals.update", "referrals.delete", "chats.read", "stats.read"]},
     "security_admin": {"name": "Security admin", "perms": ["stats.read", "logs.read", "chats.read", "bad_words.read", "bad_words.create", "bad_words.update", "bad_words.delete", "extensions.read", "extensions.create", "extensions.update", "extensions.delete", "settings.read", "settings.update", "whitelist.read", "whitelist.create", "whitelist.delete", "secret_logs.read", "secret_logs.update"]},
 }
 
@@ -359,11 +366,11 @@ def back_to_main_kb() -> InlineKeyboardMarkup:
 
 def stats_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Qayta tekshirish", callback_data="stats")],
+        [InlineKeyboardButton(text="🔄 Bazadan qayta ko‘rsatish", callback_data="stats")],
+        [InlineKeyboardButton(text="♻️ Guruh statuslarini yangilash", callback_data="stats:refresh_statuses")],
         [InlineKeyboardButton(text="📋 Guruh/kanallar ro‘yxati", callback_data="chats:page:0")],
         [InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")],
     ])
-
 
 def back_to_settings_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -373,8 +380,10 @@ def back_to_settings_kb() -> InlineKeyboardMarkup:
 
 
 def public_kb(bot_username: str) -> InlineKeyboardMarkup:
+    rights = "delete_messages+restrict_members+invite_users+pin_messages"
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=f"https://t.me/{bot_username}?startgroup=new")],
+        [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=f"https://t.me/{bot_username}?startgroup=new&admin={rights}")],
+        [InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=f"https://t.me/{bot_username}?startchannel=new&admin={rights}")],
         [InlineKeyboardButton(text="📖 Qo‘llanma", callback_data="help_info"), InlineKeyboardButton(text="🧪 Demo", callback_data="demo_info")],
         [InlineKeyboardButton(text="🛡 Xavfsizlik testi", callback_data="security_quiz"), InlineKeyboardButton(text="❓ FAQ", callback_data="faq_info")],
     ])

@@ -130,10 +130,24 @@ async def init_db():
         CREATE TABLE IF NOT EXISTS referral_link_chats (
             link_id INTEGER NOT NULL,
             chat_id INTEGER NOT NULL,
+            added_by INTEGER,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY(link_id, chat_id),
             FOREIGN KEY(link_id) REFERENCES referral_links(id) ON DELETE CASCADE,
             FOREIGN KEY(chat_id) REFERENCES chats(chat_id) ON DELETE CASCADE
+        )
+        """)
+
+        cursor = await db.execute("PRAGMA table_info(referral_link_chats)")
+        referral_chat_columns = [column[1] for column in await cursor.fetchall()]
+        if "added_by" not in referral_chat_columns:
+            await db.execute("ALTER TABLE referral_link_chats ADD COLUMN added_by INTEGER")
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS user_referral_clicks (
+            user_id INTEGER PRIMARY KEY,
+            code TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """)
 
@@ -275,6 +289,38 @@ async def update_chat_bot_status(chat_id: int, is_admin: int, bot_status: str):
             WHERE chat_id=?
         """, (1 if is_admin else 0, bot_status, chat_id))
         await db.commit()
+
+async def get_stats_summary():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM chats")
+        chats_count = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM chats WHERE is_bot_admin=1")
+        bot_admin_chats = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("""
+            SELECT COUNT(*) FROM chats
+            WHERE COALESCE(bot_status, 'unknown') IN ('not_member', 'left', 'kicked')
+        """)
+        not_member_chats = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM users")
+        users_count = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM unsafe_extensions WHERE chat_id IS NULL")
+        unsafe_ext_count = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM bad_words WHERE chat_id IS NULL")
+        bad_words_count = (await cursor.fetchone())[0]
+
+        return {
+            "chats_count": chats_count,
+            "bot_admin_chats": bot_admin_chats,
+            "not_member_chats": not_member_chats,
+            "users_count": users_count,
+            "unsafe_ext_count": unsafe_ext_count,
+            "bad_words_count": bad_words_count,
+        }
 
 
 async def delete_chat(chat_id: int) -> bool:
@@ -563,14 +609,98 @@ async def get_referral_link_by_code(code: str):
         return await cursor.fetchone()
 
 
-async def track_referral_chat(code: str, chat_id: int) -> bool:
+async def get_referral_link_by_id(link_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "SELECT id, name, code, created_by, created_at FROM referral_links WHERE id=?",
+            (link_id,)
+        )
+        return await cursor.fetchone()
+
+
+async def update_referral_link_name(link_id: int, name: str) -> bool:
+    name = (name or "").strip()[:100] or "Nomsiz havola"
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            "UPDATE referral_links SET name=? WHERE id=?",
+            (name, link_id)
+        )
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def delete_referral_link(link_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        # SQLite har bir connection uchun foreign_keys alohida yoqiladi.
+        # Shuning uchun eski bazalarda ham bog‘langan chatlarni qo‘lda tozalaymiz.
+        await db.execute("DELETE FROM referral_link_chats WHERE link_id=?", (link_id,))
+        cursor = await db.execute("DELETE FROM referral_links WHERE id=?", (link_id,))
+        await db.commit()
+        return cursor.rowcount > 0
+
+
+async def save_user_referral_click(user_id: int, code: str) -> bool:
+    code = (code or "").strip()
+    if not user_id or not code:
+        return False
     link = await get_referral_link_by_code(code)
     if not link:
         return False
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute(
-            "INSERT OR IGNORE INTO referral_link_chats (link_id, chat_id) VALUES (?, ?)",
-            (link[0], chat_id)
+            """
+            INSERT INTO user_referral_clicks (user_id, code, updated_at)
+            VALUES (?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(user_id) DO UPDATE SET
+                code=excluded.code,
+                updated_at=CURRENT_TIMESTAMP
+            """,
+            (user_id, code)
+        )
+        await db.commit()
+        return True
+
+
+async def get_user_referral_click(user_id: int, max_age_hours: int = 72) -> str | None:
+    if not user_id:
+        return None
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute(
+            """
+            SELECT code
+            FROM user_referral_clicks
+            WHERE user_id=?
+              AND datetime(updated_at) >= datetime('now', ?)
+            ORDER BY updated_at DESC
+            LIMIT 1
+            """,
+            (user_id, f"-{int(max_age_hours)} hours")
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else None
+
+
+async def track_referral_chat_by_user(user_id: int, chat_id: int) -> bool:
+    code = await get_user_referral_click(user_id)
+    if not code:
+        return False
+    return await track_referral_chat(code, chat_id, user_id)
+
+
+async def track_referral_chat(code: str, chat_id: int, added_by: int | None = None) -> bool:
+    code = (code or "").strip()
+    link = await get_referral_link_by_code(code)
+    if not link:
+        return False
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute(
+            """
+            INSERT INTO referral_link_chats (link_id, chat_id, added_by)
+            VALUES (?, ?, ?)
+            ON CONFLICT(link_id, chat_id) DO UPDATE SET
+                added_by=COALESCE(referral_link_chats.added_by, excluded.added_by)
+            """,
+            (link[0], chat_id, added_by)
         )
         await db.commit()
         return True
@@ -598,7 +728,7 @@ async def get_referral_stats():
 async def get_referral_chats(link_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
-            SELECT c.chat_id, c.title, c.type, c.is_bot_admin, COALESCE(c.bot_status, 'unknown'), rlc.added_at
+            SELECT c.chat_id, c.title, c.type, c.is_bot_admin, COALESCE(c.bot_status, 'unknown'), rlc.added_at, rlc.added_by
             FROM referral_link_chats rlc
             JOIN chats c ON c.chat_id = rlc.chat_id
             WHERE rlc.link_id=?

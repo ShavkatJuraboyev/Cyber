@@ -2,6 +2,20 @@ from .common import *
 
 router = Router()
 
+REF_ADD_RIGHTS = "delete_messages+restrict_members+invite_users+pin_messages"
+
+
+def referral_group_url(bot_username: str, code: str) -> str:
+    return f"https://t.me/{bot_username}?startgroup={code}&admin={REF_ADD_RIGHTS}"
+
+
+def referral_channel_url(bot_username: str, code: str) -> str:
+    return f"https://t.me/{bot_username}?startchannel={code}&admin={REF_ADD_RIGHTS}"
+
+
+def referral_private_url(bot_username: str, code: str) -> str:
+    return f"https://t.me/{bot_username}?start={code}"
+
 async def referral_menu_kb(user_id: int) -> InlineKeyboardMarkup:
     perms = await get_admin_effective_permissions(user_id) if not is_super_admin(user_id) else set(PANEL_PERMISSIONS)
     rows = []
@@ -47,16 +61,19 @@ async def referral_create_finish(message: types.Message, state: FSMContext):
     await create_referral_link(name, code, message.from_user.id)
 
     bot_username = (await message.bot.me()).username
-    url = (
-        f"https://t.me/{bot_username}?startgroup={code}"
-        "&admin=delete_messages+restrict_members"
-    )
+    group_url = referral_group_url(bot_username, code)
+    channel_url = referral_channel_url(bot_username, code)
+    private_url = referral_private_url(bot_username, code)
 
     await message.answer(
         "✅ <b>Yangi giper ssilka yaratildi</b>\n\n"
-        f"🏷 Nomi: <b>{escape(name)}</b>\n"
-        f"🔗 Havola:\n<code>{escape(url)}</code>\n\n"
-        "Bu havola orqali bot guruhga qo‘shilganda statistika avtomatik hisoblanadi.",
+        f"🏷 Nomi: <b>{escape(name)}</b>\n\n"
+        f"👥 <b>Guruh/superguruhga qo‘shish:</b>\n<code>{escape(group_url)}</code>\n\n"
+        f"📢 <b>Kanalga qo‘shish:</b>\n<code>{escape(channel_url)}</code>\n\n"
+        f"🔁 <b>Fallback havola:</b>\n<code>{escape(private_url)}</code>\n\n"
+        "Asosiy tarqatiladigan havola — guruh yoki kanal havolasi. "
+        "Foydalanuvchi bosganda o‘ziga tegishli guruh/kanalni tanlaydi va botni admin qilib qo‘shadi. "
+        "Bot qo‘shilgan chatlar shu ssilka statistikasi ichida ko‘rinadi.",
         reply_markup=await referral_menu_kb(message.from_user.id)
     )
     await state.clear()
@@ -90,15 +107,14 @@ async def referral_list(call: types.CallbackQuery):
     kb_rows = []
 
     for number, (link_id, name, code, groups_count, admin_count, created_at) in enumerate(page_rows, start=start + 1):
-        url = (
-            f"https://t.me/{bot_username}?startgroup={code}"
-            "&admin=delete_messages+restrict_members+invite_users+pin_messages"
-        )
+        group_url = referral_group_url(bot_username, code)
+        channel_url = referral_channel_url(bot_username, code)
         text += (
             f"{number}. 🔹 <b>{escape(name)}</b>\n"
-            f"👥 Qo‘shilgan guruhlar: <b>{groups_count}</b>\n"
-            f"🛡 Admin qilinganlar: <b>{admin_count}</b>\n"
-            f"🔗 <code>{escape(url)}</code>\n\n"
+            f"👥 Qo‘shilgan guruh/kanallar: <b>{groups_count}</b>\n"
+            f"🛡 Bot admin bo‘lganlari: <b>{admin_count}</b>\n"
+            f"👥 Guruh link: <code>{escape(group_url)}</code>\n"
+            f"📢 Kanal link: <code>{escape(channel_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
             text=f"📄 {number}. {name[:30]} ({groups_count})",
@@ -153,12 +169,13 @@ async def referral_detail(call: types.CallbackQuery):
         text += "Bu ssilka orqali hali guruh qo‘shilmagan."
     else:
         for number, row in enumerate(page_chats, start=start + 1):
-            chat_id, title, chat_type, is_admin, bot_status, added_at = row
+            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row
             status = render_bot_status(is_admin, bot_status)
+            added_by_text = f" | Kim qo‘shgan: <code>{added_by}</code>" if added_by else ""
             text += (
                 f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
                 f"   ID: <code>{chat_id}</code> | {status}\n"
-                f"   Qo‘shilgan: <code>{escape(str(added_at))}</code>\n\n"
+                f"   Qo‘shilgan: <code>{escape(str(added_at))}</code>{added_by_text}\n\n"
             )
 
     kb_rows = []
@@ -170,11 +187,107 @@ async def referral_detail(call: types.CallbackQuery):
     if nav:
         kb_rows.append(nav)
 
+    action_row = []
+    if await has_panel_access(call.from_user.id, "referrals.update"):
+        action_row.append(InlineKeyboardButton(text="✏️ Nomini tahrirlash", callback_data=f"ref:edit:{link_id}:{back_page}"))
+    if await has_panel_access(call.from_user.id, "referrals.delete"):
+        action_row.append(InlineKeyboardButton(text="🗑 O‘chirish", callback_data=f"ref:delask:{link_id}:{back_page}"))
+    if action_row:
+        kb_rows.append(action_row)
+
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
     await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
+
+
+@router.callback_query(F.data.startswith("ref:edit:"))
+async def referral_edit_start(call: types.CallbackQuery, state: FSMContext):
+    if await deny_if_no_permission(call, "referrals.update"):
+        return
+
+    parts = call.data.split(":")
+    link_id = int(parts[2])
+    back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    link = await get_referral_link_by_id(link_id)
+    if not link:
+        await call.answer("❌ Ssilka topilmadi.", show_alert=True)
+        return
+
+    await state.update_data(ref_edit_link_id=link_id, ref_edit_back_page=back_page)
+    await state.set_state(ReferralStates.edit_name)
+    await call.message.edit_text(
+        f"✏️ Hozirgi nomi: <b>{escape(link[1])}</b>\n\nYangi nomni yuboring:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="⬅️ Bekor qilish", callback_data=f"ref:detail:{link_id}:0:{back_page}")]
+        ])
+    )
+    await call.answer()
+
+
+@router.message(ReferralStates.edit_name)
+async def referral_edit_finish(message: types.Message, state: FSMContext):
+    if not await has_panel_access(message.from_user.id, "referrals.update"):
+        return
+
+    data = await state.get_data()
+    link_id = int(data.get("ref_edit_link_id", 0))
+    back_page = int(data.get("ref_edit_back_page", 0))
+    name = (message.text or "").strip()[:100] or "Nomsiz havola"
+    ok = await update_referral_link_name(link_id, name)
+    await state.clear()
+    await message.answer(
+        "✅ Giper ssilka nomi yangilandi." if ok else "❌ Ssilka topilmadi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📄 Ssilkani ochish", callback_data=f"ref:detail:{link_id}:0:{back_page}")],
+            [InlineKeyboardButton(text="📊 Statistikaga qaytish", callback_data=f"ref:list:{back_page}")],
+        ])
+    )
+
+
+@router.callback_query(F.data.startswith("ref:delask:"))
+async def referral_delete_ask(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "referrals.delete"):
+        return
+
+    parts = call.data.split(":")
+    link_id = int(parts[2])
+    back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    link = await get_referral_link_by_id(link_id)
+    if not link:
+        await call.answer("❌ Ssilka topilmadi.", show_alert=True)
+        return
+
+    await call.message.edit_text(
+        f"🗑 <b>{escape(link[1])}</b> ssilkasini o‘chirasizmi?\n\n"
+        "Bu faqat ssilka va unga bog‘langan statistikani o‘chiradi. Guruhlar bazadan o‘chmaydi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Ha, o‘chirish", callback_data=f"ref:del:{link_id}:{back_page}")],
+            [InlineKeyboardButton(text="⬅️ Yo‘q", callback_data=f"ref:detail:{link_id}:0:{back_page}")],
+        ])
+    )
+    await call.answer()
+
+
+@router.callback_query(F.data.startswith("ref:del:"))
+async def referral_delete_finish(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "referrals.delete"):
+        return
+
+    parts = call.data.split(":")
+    link_id = int(parts[2])
+    back_page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
+    ok = await delete_referral_link(link_id)
+    await call.answer("✅ O‘chirildi." if ok else "❌ Ssilka topilmadi.", show_alert=True)
+    await call.message.edit_text(
+        "✅ Giper ssilka o‘chirildi." if ok else "❌ Ssilka topilmadi.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="📊 Statistikaga qaytish", callback_data=f"ref:list:{back_page}")],
+            [InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")],
+        ])
+    )
+
 
 @router.callback_query(F.data.startswith("ref:unlinked:"))
 async def referral_unlinked_chats(call: types.CallbackQuery):
@@ -301,21 +414,23 @@ async def statistics_handler(call: types.CallbackQuery):
     if await deny_if_no_permission(call, "stats.read"):
         return
 
-    chats = await refresh_all_chat_statuses(call.bot)
-    users = await get_all_users()
-    bot_admin_chats = sum(1 for c in chats if c[4] == 1)
-    not_member_chats = sum(1 for c in chats if len(c) > 5 and c[5] in {"not_member", "left", "kicked"})
+    await call.answer("⏳ Statistika yuklanmoqda...")
+
+    stats = await get_stats_summary()
+
     text = (
         "📊 <b>Statistika</b>\n\n"
-        f"👥 Guruh/kanallar: <b>{len(chats)}</b>\n"
-        f"🛡 Bot admin bo‘lgan Guruh/kanallar: <b>{bot_admin_chats}</b>\n"
-        f"🚪 Bot a’zo bo‘lmagan Guruh/kanallar: <b>{not_member_chats}</b>\n"
-        f"👤 Saqlangan foydalanuvchilar: <b>{len(users)}</b>\n"
-        f"🦠 Global xavfli kengaytmalar: <b>{len(await list_unsafe_extensions(None))}</b>\n"
-        f"🚫 Global yomon so‘zlar: <b>{len(await list_bad_words(None))}</b>"
+        f"👥 Guruh/kanallar: <b>{stats['chats_count']}</b>\n"
+        f"🛡 Bot admin bo‘lgan guruh/kanallar: <b>{stats['bot_admin_chats']}</b>\n"
+        f"🚪 Bot a’zo bo‘lmagan guruh/kanallar: <b>{stats['not_member_chats']}</b>\n"
+        f"👤 Saqlangan foydalanuvchilar: <b>{stats['users_count']}</b>\n"
+        f"🦠 Global xavfli kengaytmalar: <b>{stats['unsafe_ext_count']}</b>\n"
+        f"🚫 Global yomon so‘zlar: <b>{stats['bad_words_count']}</b>\n\n"
+        "ℹ️ Bu tezkor statistika bazadan olinadi.\n"
+        "🔄 Guruh statuslarini alohida yangilash tavsiya qilinadi."
     )
+
     await safe_edit_text(call.message, text, reply_markup=stats_kb())
-    await call.answer("✅ Statistika yangilandi")
 
 
 @router.callback_query(F.data.startswith("chats:page:"))

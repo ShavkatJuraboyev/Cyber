@@ -5,13 +5,22 @@ router = Router()
 ADD_RIGHTS = "delete_messages+restrict_members+invite_users+pin_messages"
 
 
-def add_group_url(bot_username: str) -> str:
-    return f"https://t.me/{bot_username}?startgroup=new&admin={ADD_RIGHTS}"
+def add_group_url(bot_username: str, ref_code: str | None = None) -> str:
+    """Botni guruh/superguruhga admin qilib qo‘shish uchun direct deep-link."""
+    payload = ref_code or "new"
+    return f"https://t.me/{bot_username}?startgroup={payload}&admin={ADD_RIGHTS}"
 
 
-def public_home_kb(bot_username: str) -> InlineKeyboardMarkup:
+def add_channel_url(bot_username: str, ref_code: str | None = None) -> str:
+    """Botni kanalga admin qilib qo‘shish uchun direct deep-link."""
+    payload = ref_code or "new"
+    return f"https://t.me/{bot_username}?startchannel={payload}&admin={ADD_RIGHTS}"
+
+
+def public_home_kb(bot_username: str, ref_code: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="➕ Botni guruhga qo‘shish", url=add_group_url(bot_username))],
+        [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username, ref_code))],
+        [InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=add_channel_url(bot_username, ref_code))],
         [
             InlineKeyboardButton(text="📖 To‘liq qo‘llanma", callback_data="pub:guide"),
             InlineKeyboardButton(text="🧪 Demo", callback_data="pub:demo"),
@@ -27,12 +36,13 @@ def public_home_kb(bot_username: str) -> InlineKeyboardMarkup:
     ])
 
 
-def public_back_kb(bot_username: str, back: str = "pub:home") -> InlineKeyboardMarkup:
+def public_back_kb(bot_username: str, back: str = "pub:home", ref_code: str | None = None) -> InlineKeyboardMarkup:
     rows = []
     if back != "pub:home":
         rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data=back)])
     rows.append([InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")])
-    rows.append([InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username))])
+    rows.append([InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username, ref_code))])
+    rows.append([InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=add_channel_url(bot_username, ref_code))])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
@@ -45,6 +55,7 @@ def guide_menu_kb(bot_username: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="5️⃣ Tekshirish", callback_data="guide:test")],
         [InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")],
         [InlineKeyboardButton(text="➕ Hozir guruhga qo‘shish", url=add_group_url(bot_username))],
+        [InlineKeyboardButton(text="📢 Hozir kanalga qo‘shish", url=add_channel_url(bot_username))],
     ])
 
 
@@ -100,7 +111,7 @@ QUIZ = [
 ]
 
 
-async def send_public_home(message_or_call):
+async def send_public_home(message_or_call, ref_code: str | None = None):
     bot = message_or_call.bot
     bot_username = (await bot.me()).username
     text = (
@@ -116,35 +127,51 @@ async def send_public_home(message_or_call):
         "Boshlash uchun quyidagi tugmalardan foydalaning 👇"
     )
     if isinstance(message_or_call, types.CallbackQuery):
-        await safe_edit_text(message_or_call.message, text, reply_markup=public_home_kb(bot_username))
+        await safe_edit_text(message_or_call.message, text, reply_markup=public_home_kb(bot_username, ref_code))
         await message_or_call.answer()
     else:
-        await message_or_call.answer(text, reply_markup=public_home_kb(bot_username))
+        await message_or_call.answer(text, reply_markup=public_home_kb(bot_username, ref_code))
+
+
+
+
+async def _register_started_chat(message: types.Message, payload: str = ""):
+    """Guruh/kanalda /start ref_xxx kelganda chatni saqlaydi va referralga bog‘laydi."""
+    try:
+        me = await message.bot.get_me()
+        bot_member = await message.bot.get_chat_member(message.chat.id, me.id)
+        is_bot_admin = 1 if bot_member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR} else 0
+        bot_status = getattr(bot_member.status, "value", str(bot_member.status))
+    except Exception:
+        is_bot_admin = 0
+        bot_status = "unknown"
+
+    await add_or_update_chat(
+        message.chat.id,
+        message.chat.title or "Noma’lum",
+        message.chat.type,
+        await get_chat_link(message.chat),
+        is_bot_admin,
+        bot_status,
+    )
+
+    if payload.startswith("ref_"):
+        await track_referral_chat(payload, message.chat.id, message.from_user.id if message.from_user else None)
 
 
 @router.message(Command("start", "panel", "help"))
 async def start_handler(message: types.Message, command: CommandObject):
     await add_or_update_user(message.from_user)
 
+    payload = (command.args or "").strip() if command else ""
+    # CommandObject args bo‘sh bo‘lsa, textdan ham payloadni ajratib olamiz.
+    if not payload and message.text:
+        parts = message.text.strip().split(maxsplit=1)
+        if len(parts) == 2 and parts[0].startswith("/start"):
+            payload = parts[1].strip()
+
     if message.chat.type in {"group", "supergroup", "channel"}:
-        try:
-            bot_member = await message.bot.get_chat_member(message.chat.id, (await message.bot.me()).id)
-            is_bot_admin = 1 if bot_member.status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR} else 0
-        except Exception:
-            is_bot_admin = 0
-
-        await add_or_update_chat(
-            message.chat.id,
-            message.chat.title or "Noma’lum",
-            message.chat.type,
-            await get_chat_link(message.chat),
-            is_bot_admin,
-            "administrator" if is_bot_admin else "member",
-        )
-
-        payload = (command.args or "").strip() if command else ""
-        if payload.startswith("ref_"):
-            await track_referral_chat(payload, message.chat.id)
+        await _register_started_chat(message, payload)
 
         await message.answer(
             "✅ <b>Bot guruhda ishga tushdi.</b>\n\n"
@@ -156,11 +183,36 @@ async def start_handler(message: types.Message, command: CommandObject):
         )
         return
 
+    # Referral/giper ssilka private chatda saqlanadi.
+    # Muhim: buni admin paneldan OLDIN tekshiramiz, chunki admin ham oddiy user kabi
+    # referral linkni sinab ko‘rishi mumkin. Keyin shu user botni guruh/kanalga
+    # qo‘shsa, my_chat_member event.from_user orqali chat shu ssilkaga bog‘lanadi.
+    active_ref_code = None
+    if payload.startswith("ref_"):
+        saved = await save_user_referral_click(message.from_user.id, payload)
+        if saved:
+            active_ref_code = payload
+
     if await has_panel_access(message.from_user.id):
-        await message.answer("👋 <b>Admin panel</b>\nKerakli bo‘limni tanlang:", reply_markup=await panel_menu_kb(message.from_user.id))
+        if active_ref_code:
+            await send_public_home(message, active_ref_code)
+        else:
+            await message.answer("👋 <b>Admin panel</b>\nKerakli bo‘limni tanlang:", reply_markup=await panel_menu_kb(message.from_user.id))
         return
 
-    await send_public_home(message)
+    await send_public_home(message, active_ref_code)
+
+
+@router.channel_post(F.text.startswith("/start"))
+async def channel_start_handler(message: types.Message):
+    # startchannel=ref_xxx bilan kanalga qo‘shilganda Telegram /start ref_xxx
+    # postini yuborsa, shu yerda kanal referralga bog‘lanadi.
+    payload = ""
+    if message.text:
+        parts = message.text.strip().split(maxsplit=1)
+        if len(parts) == 2:
+            payload = parts[1].strip()
+    await _register_started_chat(message, payload)
 
 
 @router.callback_query(F.data == "pub:home")
@@ -296,6 +348,7 @@ async def show_quiz_question(call: types.CallbackQuery, index: int, score: int):
                 [InlineKeyboardButton(text="📖 Qo‘llanma", callback_data="pub:guide")],
                 [InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")],
                 [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username))],
+                [InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=add_channel_url(bot_username))],
             ]),
         )
         await call.answer()
