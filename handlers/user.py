@@ -1,4 +1,5 @@
 from .common import *
+from urllib.parse import quote
 
 router = Router()
 
@@ -17,8 +18,16 @@ def add_channel_url(bot_username: str, ref_code: str | None = None) -> str:
     return f"https://t.me/{bot_username}?startchannel={payload}&admin={ADD_RIGHTS}"
 
 
+def referral_share_url(bot_username: str, ref_code: str | None = None) -> str | None:
+    if not ref_code:
+        return None
+    public_url = f"https://t.me/{bot_username}?start={ref_code}"
+    text = "Botni guruhga admin qilib qo‘shish uchun shu havolani bosing."
+    return f"https://t.me/share/url?url={quote(public_url)}&text={quote(text)}"
+
+
 def public_home_kb(bot_username: str, ref_code: str | None = None) -> InlineKeyboardMarkup:
-    return InlineKeyboardMarkup(inline_keyboard=[
+    rows = [
         [InlineKeyboardButton(text="➕ Guruhga qo‘shish", url=add_group_url(bot_username, ref_code))],
         [InlineKeyboardButton(text="📢 Kanalga qo‘shish", url=add_channel_url(bot_username, ref_code))],
         [
@@ -33,7 +42,11 @@ def public_home_kb(bot_username: str, ref_code: str | None = None) -> InlineKeyb
             InlineKeyboardButton(text="⚙️ Imkoniyatlar", callback_data="pub:features"),
             InlineKeyboardButton(text="🆘 Yordam", callback_data="pub:support"),
         ],
-    ])
+    ]
+    share_url = referral_share_url(bot_username, ref_code)
+    if share_url:
+        rows.insert(2, [InlineKeyboardButton(text="🔗 Shu ssilkani ulashish", url=share_url)])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def public_back_kb(bot_username: str, back: str = "pub:home", ref_code: str | None = None) -> InlineKeyboardMarkup:
@@ -46,7 +59,7 @@ def public_back_kb(bot_username: str, back: str = "pub:home", ref_code: str | No
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-def guide_menu_kb(bot_username: str) -> InlineKeyboardMarkup:
+def guide_menu_kb(bot_username: str, ref_code: str | None = None) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1️⃣ Botni qo‘shish", callback_data="guide:add")],
         [InlineKeyboardButton(text="2️⃣ Admin huquqlari", callback_data="guide:rights")],
@@ -54,8 +67,8 @@ def guide_menu_kb(bot_username: str) -> InlineKeyboardMarkup:
         [InlineKeyboardButton(text="4️⃣ Xavfli fayllar", callback_data="guide:files")],
         [InlineKeyboardButton(text="5️⃣ Tekshirish", callback_data="guide:test")],
         [InlineKeyboardButton(text="🏠 Bosh menyu", callback_data="pub:home")],
-        [InlineKeyboardButton(text="➕ Hozir guruhga qo‘shish", url=add_group_url(bot_username))],
-        [InlineKeyboardButton(text="📢 Hozir kanalga qo‘shish", url=add_channel_url(bot_username))],
+        [InlineKeyboardButton(text="➕ Hozir guruhga qo‘shish", url=add_group_url(bot_username, ref_code))],
+        [InlineKeyboardButton(text="📢 Hozir kanalga qo‘shish", url=add_channel_url(bot_username, ref_code))],
     ])
 
 
@@ -114,6 +127,17 @@ QUIZ = [
 async def send_public_home(message_or_call, ref_code: str | None = None):
     bot = message_or_call.bot
     bot_username = (await bot.me()).username
+
+    # Referral linkdan kirgan foydalanuvchi menyuda yurib qolsa ham,
+    # keyingi “Guruhga qo‘shish” tugmalarida aynan o‘sha ref_code saqlanadi.
+    user_id = None
+    if isinstance(message_or_call, types.CallbackQuery) and message_or_call.from_user:
+        user_id = message_or_call.from_user.id
+    elif getattr(message_or_call, "from_user", None):
+        user_id = message_or_call.from_user.id
+    if not ref_code and user_id:
+        ref_code = await get_user_referral_click(user_id)
+
     text = (
         "👋 <b>Salom! Men guruhingizni himoya qiluvchi xavfsizlik botiman.</b>\n\n"
         "Men guruhlarda spam, yomon so‘zlar, shubhali fayllar va firibgarlik urinishlarini kamaytirishga yordam beraman.\n\n"
@@ -126,6 +150,12 @@ async def send_public_home(message_or_call, ref_code: str | None = None):
         "• adminlarga aniq CRUD huquqlar berish.\n\n"
         "Boshlash uchun quyidagi tugmalardan foydalaning 👇"
     )
+    if ref_code:
+        text += (
+            "\n\n🔗 <b>Ssilka saqlandi.</b> Endi pastdagi <b>Guruhga qo‘shish</b> tugmasi orqali "
+            "botni guruhingizga admin qilib qo‘shing. Xuddi shu ssilkani boshqalarga ham ulashsangiz, "
+            "ular qo‘shgan guruhlar ham shu ssilka statistikasiga yoziladi."
+        )
     if isinstance(message_or_call, types.CallbackQuery):
         await safe_edit_text(message_or_call.message, text, reply_markup=public_home_kb(bot_username, ref_code))
         await message_or_call.answer()
@@ -233,7 +263,7 @@ async def public_guide(call: types.CallbackQuery):
         "3️⃣ Paneldan sozlamalarni yoqish\n"
         "4️⃣ Xavfli fayllarni bloklash\n"
         "5️⃣ Test qilib ko‘rish",
-        reply_markup=guide_menu_kb(bot_username),
+        reply_markup=guide_menu_kb(bot_username, await get_user_referral_click(call.from_user.id)),
     )
     await call.answer()
 

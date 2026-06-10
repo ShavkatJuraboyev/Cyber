@@ -3,12 +3,33 @@ from .common import *
 router = Router()
 
 
+GROUP_START_TEXT = (
+    "✅ <b>Bot muvaffaqiyatli qo‘shildi!</b>\n\n"
+    "Bot to‘liq ishlashi uchun uni administrator qiling.\n\n"
+    "Quyidagi ruxsatlarni berishni tavsiya qilamiz:\n"
+    "• Xabarlarni o‘chirish;\n"
+    "• Foydalanuvchilarni cheklash;\n"
+    "• Guruhni himoya qilish va nazorat qilish.\n\n"
+    "Bot administrator qilingandan so‘ng barcha funksiyalar faol ishlaydi."
+)
+
+
+def _is_active_chat_status(status) -> bool:
+    return status not in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}
+
+
+def _is_admin_status(status) -> bool:
+    return status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR}
+
+
 @router.my_chat_member()
 async def chat_member_handler(event: types.ChatMemberUpdated):
     chat = event.chat
+    old_status = event.old_chat_member.status
     status = event.new_chat_member.status
+
     if chat.type in {"group", "supergroup", "channel"}:
-        is_admin_flag = 1 if status in {ChatMemberStatus.ADMINISTRATOR, ChatMemberStatus.CREATOR} else 0
+        is_admin_flag = 1 if _is_admin_status(status) else 0
         await add_or_update_chat(
             chat.id,
             chat.title or "Noma’lum",
@@ -21,9 +42,22 @@ async def chat_member_handler(event: types.ChatMemberUpdated):
         # Referral tracking faqat bot admin qilinganda emas, bot chatga qo‘shilgan
         # har qanday holatda ishlashi kerak. Shunda admin panelda "qo‘shilgan" va
         # "admin qilingan" sonlari alohida ko‘rinadi.
-        if event.from_user and status not in {ChatMemberStatus.LEFT, ChatMemberStatus.KICKED}:
+        if event.from_user and _is_active_chat_status(status):
             await add_or_update_user(event.from_user)
             await track_referral_chat_by_user(event.from_user.id, chat.id)
+
+        # Muhim: startgroup link orqali bot guruhga qo‘shilganda Telegram har doim
+        # guruh ichida /start xabarini yubormaydi. Oldingi kodda salom/xabar faqat
+        # /start handlerida edi, shuning uchun oddiy foydalanuvchi qo‘shgan guruhda
+        # bu yozuv chiqmasligi mumkin edi. my_chat_member esa bot qo‘shilganda yoki
+        # admin qilinganda doim keladi, shuning uchun xabar shu yerda ham yuboriladi.
+        became_active = (not _is_active_chat_status(old_status)) and _is_active_chat_status(status)
+        became_admin = (not _is_admin_status(old_status)) and _is_admin_status(status)
+        if chat.type in {"group", "supergroup"} and (became_active or became_admin):
+            try:
+                await event.bot.send_message(chat.id, GROUP_START_TEXT)
+            except Exception as exc:
+                logger.exception("Guruhga ishga tushish xabarini yuborib bo‘lmadi: %s", exc)
 
 
 @router.message(F.new_chat_members)

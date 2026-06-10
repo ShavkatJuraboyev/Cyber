@@ -16,6 +16,23 @@ def referral_channel_url(bot_username: str, code: str) -> str:
 def referral_private_url(bot_username: str, code: str) -> str:
     return f"https://t.me/{bot_username}?start={code}"
 
+
+async def refresh_referral_statuses(bot, link_id: int | None = None):
+    """Referral statistikasi ochilganda botning admin/member holatini Telegramdan yangilaydi."""
+    seen: set[int] = set()
+    if link_id is not None:
+        link_ids = [link_id]
+    else:
+        link_ids = [row[0] for row in await get_referral_stats()]
+
+    for lid in link_ids:
+        for row in await get_referral_chats(lid):
+            chat_id = row[0]
+            if chat_id in seen:
+                continue
+            seen.add(chat_id)
+            await refresh_one_chat_status(bot, chat_id)
+
 async def referral_menu_kb(user_id: int) -> InlineKeyboardMarkup:
     perms = await get_admin_effective_permissions(user_id) if not is_super_admin(user_id) else set(PANEL_PERMISSIONS)
     rows = []
@@ -61,19 +78,17 @@ async def referral_create_finish(message: types.Message, state: FSMContext):
     await create_referral_link(name, code, message.from_user.id)
 
     bot_username = (await message.bot.me()).username
-    group_url = referral_group_url(bot_username, code)
-    channel_url = referral_channel_url(bot_username, code)
-    private_url = referral_private_url(bot_username, code)
+    public_url = referral_private_url(bot_username, code)
 
     await message.answer(
         "✅ <b>Yangi giper ssilka yaratildi</b>\n\n"
         f"🏷 Nomi: <b>{escape(name)}</b>\n\n"
-        f"👥 <b>Guruh/superguruhga qo‘shish:</b>\n<code>{escape(group_url)}</code>\n\n"
-        f"📢 <b>Kanalga qo‘shish:</b>\n<code>{escape(channel_url)}</code>\n\n"
-        f"🔁 <b>Fallback havola:</b>\n<code>{escape(private_url)}</code>\n\n"
-        "Asosiy tarqatiladigan havola — guruh yoki kanal havolasi. "
-        "Foydalanuvchi bosganda o‘ziga tegishli guruh/kanalni tanlaydi va botni admin qilib qo‘shadi. "
-        "Bot qo‘shilgan chatlar shu ssilka statistikasi ichida ko‘rinadi.",
+        f"🔗 <b>Tarqatiladigan giper ssilka:</b>\n<code>{escape(public_url)}</code>\n\n"
+        "Shu bitta ssilkani istalgan foydalanuvchiga yuboring. Ular ham shu ssilkani boshqalarga ulashishi mumkin. "
+        "Kim shu ssilkani bosib private chatga kirsa, bot ref kodni eslab qoladi va guruh/kanalga qo‘shish tugmalarini beradi. "
+        "Keyin o‘sha foydalanuvchi botni o‘z guruhiga admin qilib qo‘shsa, guruh aynan shu ssilka statistikasi ichida ko‘rinadi.\n\n"
+        "⚠️ Muhim: Telegram direct <code>startgroup</code> linkidan my_chat_member eventida ref kodni doim qaytarmaydi. "
+        "Shuning uchun tarqatiladigan asosiy ssilka private <code>?start=ref_...</code> ko‘rinishida bo‘ladi; guruhga qo‘shish tugmasi bot ichida chiqadi.",
         reply_markup=await referral_menu_kb(message.from_user.id)
     )
     await state.clear()
@@ -87,6 +102,7 @@ async def referral_list(call: types.CallbackQuery):
     parts = call.data.split(":")
     page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
 
+    await refresh_referral_statuses(call.bot)
     rows = await get_referral_stats()
     total = len(rows)
     if not rows:
@@ -107,14 +123,12 @@ async def referral_list(call: types.CallbackQuery):
     kb_rows = []
 
     for number, (link_id, name, code, groups_count, admin_count, created_at) in enumerate(page_rows, start=start + 1):
-        group_url = referral_group_url(bot_username, code)
-        channel_url = referral_channel_url(bot_username, code)
+        public_url = referral_private_url(bot_username, code)
         text += (
             f"{number}. 🔹 <b>{escape(name)}</b>\n"
             f"👥 Qo‘shilgan guruh/kanallar: <b>{groups_count}</b>\n"
             f"🛡 Bot admin bo‘lganlari: <b>{admin_count}</b>\n"
-            f"👥 Guruh link: <code>{escape(group_url)}</code>\n"
-            f"📢 Kanal link: <code>{escape(channel_url)}</code>\n\n"
+            f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
             text=f"📄 {number}. {name[:30]} ({groups_count})",
@@ -144,6 +158,7 @@ async def referral_detail(call: types.CallbackQuery):
     page = int(parts[3]) if len(parts) > 3 and parts[3].isdigit() else 0
     back_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
 
+    await refresh_referral_statuses(call.bot, link_id)
     stats_rows = await get_referral_stats()
     current_link = next((row for row in stats_rows if row[0] == link_id), None)
     chats = await get_referral_chats(link_id)
@@ -392,10 +407,11 @@ async def referral_assign_chat(call: types.CallbackQuery):
 async def show_help(call: types.CallbackQuery):
     await call.message.edit_text(
         "📖 <b>Qo‘llanma</b>\n\n"
-        "1️⃣ Botni guruhga qo‘shing.\n"
-        "2️⃣ Botga quyidagi admin huquqlarini bering: xabarlarni o‘chirish, foydalanuvchini cheklash.\n"
-        "3️⃣ Admin panel orqali yomon so‘zlar, xavfli fayl kengaytmalari, mute va oq ro‘yxatni sozlang.\n\n"
-        "✅ Shundan keyin bot guruhni avtomatik nazorat qiladi.",
+        "1️⃣ Botni guruhingizga qo‘shing.\n"
+        "2️⃣ Botni administrator qiling va xabarlarni o‘chirish hamda foydalanuvchilarni cheklash huquqlarini bering.\n"
+        "3️⃣ Boshqaruv paneli orqali taqiqlangan so‘zlar, bloklanadigan fayl turlari va qoidabuzarlarga qo‘llaniladigan choralarni sozlang.\n"
+        "4️⃣ Ishonchli foydalanuvchilarni istisno ro‘yxatiga qo‘shishingiz mumkin.\n\n"
+        "✅ Shundan so‘ng bot guruhingizni avtomatik nazorat qiladi va qoidabuzarlarga qarshi choralar ko‘radi.",
         reply_markup=back_to_main_kb()
     )
     await call.answer()

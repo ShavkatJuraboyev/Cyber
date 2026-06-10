@@ -69,6 +69,7 @@ from database import (
     remove_unsafe_all_extensions,
     track_referral_chat,
     save_user_referral_click,
+    get_user_referral_click,
     track_referral_chat_by_user,
     remove_whitelist_user,
     reset_warning,
