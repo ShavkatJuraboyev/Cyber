@@ -602,22 +602,44 @@ async def chat_delete_handler(call: types.CallbackQuery):
 
 @router.callback_query(F.data == "logs")
 async def logs_handler(call: types.CallbackQuery):
+    await _render_logs_page(call, 0)
+
+
+@router.callback_query(F.data.startswith("logs:page:"))
+async def logs_page_handler(call: types.CallbackQuery):
+    page = int(call.data.split(":")[2]) if call.data and call.data.split(":")[2].isdigit() else 0
+    await _render_logs_page(call, page)
+
+
+async def _render_logs_page(call: types.CallbackQuery, page: int):
     if await deny_if_no_permission(call, "logs.read"):
         return
-    rows = await get_security_logs(20)
+    per_page = 10
+    total = await get_security_log_count()
+    max_page = max((total - 1) // per_page, 0)
+    page = max(0, min(page, max_page))
+    rows = await get_security_logs(per_page, page * per_page)
     if not rows:
         text = "🧾 Hozircha loglar yo‘q."
     else:
-        text = "🧾 <b>Oxirgi xavfsizlik loglari</b>\n\n"
+        text = f"🧾 <b>Xavfsizlik loglari</b>\nSahifa: <b>{page + 1}/{max_page + 1}</b> | Jami: <b>{total}</b>\n\n"
         for chat_id, user_id, action, reason, file_name, created_at in rows:
             text += (
                 f"• <b>{escape(action)}</b> — {escape(reason or '—')}\n"
                 f"  Chat: <code>{chat_id}</code> | User: <code>{user_id}</code>\n"
                 f"  Fayl: {escape(file_name or '—')} | {format_samarkand(created_at)}\n\n"
             )
-    await safe_edit_text(call.message, text, reply_markup=back_to_main_kb())
+    kb_rows = []
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"logs:page:{page-1}"))
+    if (page + 1) * per_page < total:
+        nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"logs:page:{page+1}"))
+    if nav:
+        kb_rows.append(nav)
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="menu:main")])
+    await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
-
 
 
 @router.callback_query(F.data == "export:txt")
@@ -1140,19 +1162,22 @@ async def users_pagination(call: types.CallbackQuery):
     if await deny_if_no_permission(call, "users.read"):
         return
     page = int(call.data.split(":")[2])
-    users = await get_all_users()
-    if not users:
+    total = await get_user_count()
+    if total <= 0:
         return await safe_edit_text(call.message, "👥 Hozircha foydalanuvchilar yo‘q.", reply_markup=back_to_main_kb())
+    max_page = max((total - 1) // USERS_PER_PAGE, 0)
+    page = max(0, min(page, max_page))
     start = page * USERS_PER_PAGE
     end = start + USERS_PER_PAGE
+    users = await get_all_users(USERS_PER_PAGE, start)
     rows = []
-    for u in users[start:end]:
+    for u in users:
         name = f"{u[1] or ''} {u[2] or ''}".strip() or "Noma’lum"
         rows.append([InlineKeyboardButton(text=f"{name} ({u[0]})", callback_data=f"user:detail:{u[0]}")])
     nav = []
     if page > 0:
         nav.append(InlineKeyboardButton(text="⬅️ Oldingi", callback_data=f"users:page:{page-1}"))
-    if end < len(users):
+    if end < total:
         nav.append(InlineKeyboardButton(text="➡️ Keyingi", callback_data=f"users:page:{page+1}"))
     if nav:
         rows.append(nav)

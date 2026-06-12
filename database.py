@@ -1,6 +1,7 @@
 import aiosqlite
 import logging
 from datetime import datetime, timedelta
+import time
 from utils.timezone import now_samarkand_str, now_samarkand
 from config import DB_PATH
 
@@ -8,6 +9,34 @@ logger = logging.getLogger(__name__)
 
 
 ARCHIVE_EXTENSIONS = [".zip", ".rar", ".7z", ".tar", ".gz"]
+
+# Tezkor guruh tekshiruvlari uchun kichik TTL cache.
+# 1000+ foydalanuvchi yozganda har xabar uchun 3-4 marta SQLite ochilishini kamaytiradi.
+_CACHE_TTL = 30
+_settings_cache: dict[int, tuple[float, dict]] = {}
+_bad_words_cache: dict[int | None, tuple[float, list[str]]] = {}
+_unsafe_ext_cache: dict[int | None, tuple[float, list[str]]] = {}
+_whitelist_cache: dict[tuple[int, int], tuple[float, bool]] = {}
+
+def _cache_get(cache: dict, key):
+    item = cache.get(key)
+    if not item:
+        return None
+    ts, value = item
+    if time.monotonic() - ts > _CACHE_TTL:
+        cache.pop(key, None)
+        return None
+    return value
+
+def _cache_set(cache: dict, key, value):
+    cache[key] = (time.monotonic(), value)
+    return value
+
+def clear_runtime_cache():
+    _settings_cache.clear()
+    _bad_words_cache.clear()
+    _unsafe_ext_cache.clear()
+    _whitelist_cache.clear()
 
 
 async def init_db():
@@ -252,6 +281,14 @@ async def init_db():
         )
         """)
 
+        # Katta bazalarda panel va xavfsizlik tekshiruvlari qotmasligi uchun indekslar.
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_users_updated_at ON users(updated_at DESC)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at DESC)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_security_logs_id ON security_logs(id DESC)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_bad_words_chat_word ON bad_words(chat_id, word)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_unsafe_extensions_chat_ext ON unsafe_extensions(chat_id, ext)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_whitelist_chat_user ON whitelist(chat_id, user_id)")
+
         await db.commit()
 
 
@@ -355,13 +392,18 @@ async def delete_chat(chat_id: int) -> bool:
         return cur.rowcount > 0
 
 
-async def get_all_chats():
+async def get_all_chats(limit: int | None = None, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
+        sql = """
             SELECT chat_id, title, type, invite_link, is_bot_admin, COALESCE(bot_status, 'unknown')
             FROM chats
             ORDER BY updated_at DESC
-        """)
+        """
+        params: tuple = ()
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params = (int(limit), int(offset))
+        cursor = await db.execute(sql, params)
         return await cursor.fetchall()
 
 
@@ -394,14 +436,25 @@ async def add_or_update_user(user):
         await db.commit()
 
 
-async def get_all_users():
+async def get_all_users(limit: int | None = None, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
+        sql = """
             SELECT user_id, first_name, last_name, username, language_code, joined_at
             FROM users
             ORDER BY updated_at DESC
-        """)
+        """
+        params: tuple = ()
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params = (int(limit), int(offset))
+        cursor = await db.execute(sql, params)
         return await cursor.fetchall()
+
+
+async def get_user_count() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM users")
+        return (await cursor.fetchone())[0]
 
 
 async def get_user_by_id(user_id: int):
@@ -423,6 +476,7 @@ async def add_bad_word(word: str, chat_id: int | None = None) -> bool:
             (chat_id, word)
         )
         await db.commit()
+        clear_runtime_cache()
         return cur.rowcount > 0
 
 
@@ -434,10 +488,14 @@ async def remove_bad_word(word: str, chat_id: int | None = None) -> bool:
         else:
             cur = await db.execute("DELETE FROM bad_words WHERE word=? AND chat_id=?", (word, chat_id))
         await db.commit()
+        clear_runtime_cache()
         return cur.rowcount > 0
 
 
 async def list_bad_words(chat_id: int | None = None):
+    cached = _cache_get(_bad_words_cache, chat_id)
+    if cached is not None:
+        return cached
     async with aiosqlite.connect(DB_PATH) as db:
         if chat_id is None:
             cursor = await db.execute("SELECT word FROM bad_words WHERE chat_id IS NULL ORDER BY word")
@@ -449,7 +507,7 @@ async def list_bad_words(chat_id: int | None = None):
                 ORDER BY word
             """, (chat_id,))
         rows = await cursor.fetchall()
-        return [r[0] for r in rows]
+        return _cache_set(_bad_words_cache, chat_id, [r[0] for r in rows])
 
 
 async def _settings_row_to_dict(row):
@@ -472,10 +530,13 @@ async def get_global_settings():
             FROM settings WHERE chat_id=0
         """)
         row = await cursor.fetchone()
-        return await _settings_row_to_dict(row)
+        return _cache_set(_settings_cache, 0, await _settings_row_to_dict(row))
 
 
 async def get_settings(chat_id: int):
+    cached = _cache_get(_settings_cache, chat_id)
+    if cached is not None:
+        return cached
     async with aiosqlite.connect(DB_PATH) as db:
         # Yangi guruhlar uchun default qiymatlar umumiy sozlamadan olinadi.
         await db.execute("INSERT OR IGNORE INTO settings (chat_id) VALUES (0)")
@@ -509,6 +570,7 @@ async def set_mute_minutes(chat_id: int, minutes: int) -> bool:
                 updated_at=CURRENT_TIMESTAMP
         """, (chat_id, minutes))
         await db.commit()
+        clear_runtime_cache()
         return True
 
 
@@ -520,6 +582,7 @@ async def update_setting(chat_id: int, key: str, value: int):
         await db.execute("INSERT OR IGNORE INTO settings (chat_id) VALUES (?)", (chat_id,))
         await db.execute(f"UPDATE settings SET {key}=?, updated_at=CURRENT_TIMESTAMP WHERE chat_id=?", (value, chat_id))
         await db.commit()
+        clear_runtime_cache()
 
 
 async def update_setting_for_all_chats(key: str, value: int) -> int:
@@ -548,6 +611,7 @@ async def update_setting_for_all_chats(key: str, value: int) -> int:
                 (value, *chat_ids),
             )
         await db.commit()
+        clear_runtime_cache()
         return len(chat_ids)
 
 
@@ -555,12 +619,14 @@ async def add_whitelist_user(chat_id: int, user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("INSERT OR IGNORE INTO whitelist (chat_id, user_id) VALUES (?, ?)", (chat_id, user_id))
         await db.commit()
+        clear_runtime_cache()
 
 
 async def remove_whitelist_user(chat_id: int, user_id: int):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("DELETE FROM whitelist WHERE chat_id=? AND user_id=?", (chat_id, user_id))
         await db.commit()
+        clear_runtime_cache()
 
 
 async def list_whitelist(chat_id: int):
@@ -571,12 +637,19 @@ async def list_whitelist(chat_id: int):
 
 
 async def is_whitelisted(chat_id: int, user_id: int) -> bool:
+    key = (chat_id, user_id)
+    cached = _cache_get(_whitelist_cache, key)
+    if cached is not None:
+        return cached
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("SELECT 1 FROM whitelist WHERE chat_id=? AND user_id=?", (chat_id, user_id))
-        return await cursor.fetchone() is not None
+        return _cache_set(_whitelist_cache, key, await cursor.fetchone() is not None)
 
 
 async def list_unsafe_extensions(chat_id: int | None = None):
+    cached = _cache_get(_unsafe_ext_cache, chat_id)
+    if cached is not None:
+        return cached
     async with aiosqlite.connect(DB_PATH) as db:
         if chat_id is None:
             cursor = await db.execute("SELECT ext FROM unsafe_extensions WHERE chat_id IS NULL ORDER BY ext")
@@ -587,7 +660,7 @@ async def list_unsafe_extensions(chat_id: int | None = None):
                 GROUP BY ext ORDER BY ext
             """, (chat_id,))
         rows = await cursor.fetchall()
-        return [r[0] for r in rows]
+        return _cache_set(_unsafe_ext_cache, chat_id, [r[0] for r in rows])
 
 
 async def add_unsafe_extension(ext: str, chat_id: int | None = None):
@@ -597,6 +670,7 @@ async def add_unsafe_extension(ext: str, chat_id: int | None = None):
     async with aiosqlite.connect(DB_PATH) as db:
         await db.execute("INSERT OR IGNORE INTO unsafe_extensions (chat_id, ext) VALUES (?, ?)", (chat_id, ext))
         await db.commit()
+        clear_runtime_cache()
 
 
 async def remove_unsafe_extension(ext: str, chat_id: int | None = None):
@@ -609,6 +683,7 @@ async def remove_unsafe_extension(ext: str, chat_id: int | None = None):
         else:
             await db.execute("DELETE FROM unsafe_extensions WHERE chat_id=? AND ext=?", (chat_id, ext))
         await db.commit()
+        clear_runtime_cache()
 
 async def remove_unsafe_all_extensions(chat_id: int | None = None):
     async with aiosqlite.connect(DB_PATH) as db:
@@ -648,15 +723,21 @@ async def add_security_log(chat_id: int | None, user_id: int | None, action: str
         await db.commit()
 
 
-async def get_security_logs(limit: int = 20):
+async def get_security_logs(limit: int = 20, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
         cursor = await db.execute("""
             SELECT chat_id, user_id, action, reason, file_name, created_at
             FROM security_logs
             ORDER BY id DESC
-            LIMIT ?
-        """, (limit,))
+            LIMIT ? OFFSET ?
+        """, (int(limit), int(offset)))
         return await cursor.fetchall()
+
+
+async def get_security_log_count() -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM security_logs")
+        return (await cursor.fetchone())[0]
 
 
 async def create_referral_link(name: str, code: str, created_by: int | None = None) -> int:

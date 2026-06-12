@@ -1,10 +1,18 @@
 from .common import *
 from urllib.parse import quote
+import asyncio
 
 router = Router()
 
 ADD_RIGHTS = "delete_messages+restrict_members+invite_users+pin_messages"
 
+
+async def delete_after_5_seconds(message: types.Message):
+    try:
+        await asyncio.sleep(5)
+        await message.delete()
+    except Exception:
+        pass
 
 def add_group_url(bot_username: str, ref_code: str | None = None) -> str:
     """Botni guruh/superguruhga admin qilib qo‘shish uchun direct deep-link."""
@@ -299,8 +307,12 @@ async def start_handler(message: types.Message, command: CommandObject):
 
     if message.chat.type in {"group", "supergroup", "channel"}:
         await _register_started_chat(message, payload)
-
-        await message.answer(
+        # Foydalanuvchi yuborgan /start ni o'chirish
+        try:
+            asyncio.create_task(delete_after_5_seconds(message))
+        except Exception:
+            pass
+        sent = await message.answer(
             "✅ <b>Bot guruhga muvaffaqiyatli qo‘shildi!</b>\n\n"
             "Botning barcha imkoniyatlaridan foydalanish uchun uni administrator qiling.\n\n"
             "Administrator qilingandan so‘ng bot:\n"
@@ -308,6 +320,8 @@ async def start_handler(message: types.Message, command: CommandObject):
             "• Qoidabuzar foydalanuvchilarga cheklov qo‘yadi;\n"
             "• Guruh xavfsizligini avtomatik nazorat qiladi."
         )
+
+        asyncio.create_task(delete_after_5_seconds(sent))
         return
 
     # Referral/giper ssilka private chatda saqlanadi.

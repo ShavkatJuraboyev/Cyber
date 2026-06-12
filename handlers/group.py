@@ -55,7 +55,8 @@ async def chat_member_handler(event: types.ChatMemberUpdated):
         became_admin = (not _is_admin_status(old_status)) and _is_admin_status(status)
         if chat.type in {"group", "supergroup"} and (became_active or became_admin):
             try:
-                await event.bot.send_message(chat.id, GROUP_START_TEXT)
+                info = await event.bot.send_message(chat.id, GROUP_START_TEXT)
+                asyncio.create_task(delete_later(info, 5))
             except Exception as exc:
                 logger.exception("Guruhga ishga tushish xabarini yuborib bo‘lmadi: %s", exc)
 
@@ -169,11 +170,7 @@ async def process_unsafe_document(message: types.Message):
 
     if message.from_user:
         await add_or_update_user(message.from_user)
-        # Faqat superadmin va whitelist o'tib ketsin. Oddiy guruh adminlari ham zararli fayl tashlasa bloklanadi.
-        if is_super_admin(message.from_user.id):
-            return
-        if await is_whitelisted(message.chat.id, message.from_user.id):
-            return
+        # Zararli faylda hech kimga istisno yo‘q: admin, superadmin, guruh egasi, whitelist — barchasi tekshiriladi.
 
     doc = message.document
     filename = doc.file_name or "nomalum_fayl"
@@ -229,7 +226,7 @@ async def process_unsafe_document(message: types.Message):
 
     try:
         info = await message.answer(text)
-        asyncio.create_task(delete_later(info, 10))
+        asyncio.create_task(delete_later(info, 5))
     except Exception:
         pass
 
@@ -288,7 +285,7 @@ async def bad_words_guard(message: types.Message):
 
     try:
         warn = await message.answer(warn_text)
-        asyncio.create_task(delete_later(warn, 10))
+        asyncio.create_task(delete_later(warn, 5))
     except Exception:
         pass
 
