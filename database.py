@@ -915,7 +915,7 @@ async def get_referral_stats():
                 rl.id,
                 rl.name,
                 rl.code,
-                COALESCE(rsc.groups_count, COUNT(DISTINCT rlc.chat_id), 0) AS groups_count,
+                COALESCE(rsc.admin_count, SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS groups_count,
                 COALESCE(rsc.admin_count, SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS admin_count,
                 rl.created_at,
                 rsc.updated_at,
@@ -937,7 +937,7 @@ async def get_referral_chats(link_id: int, limit: int | None = None, offset: int
             SELECT c.chat_id, c.title, c.type, c.is_bot_admin, COALESCE(c.bot_status, 'unknown'), rlc.added_at, rlc.added_by
             FROM referral_link_chats rlc
             JOIN chats c ON c.chat_id = rlc.chat_id
-            WHERE rlc.link_id=?
+            WHERE rlc.link_id=? AND c.is_bot_admin=1
             ORDER BY rlc.added_at DESC
         """
         params: tuple = (link_id,)
@@ -1318,7 +1318,7 @@ async def rebuild_referral_stats_cache():
             INSERT INTO referral_stats_cache (link_id, groups_count, admin_count, member_count, not_member_count, updated_at)
             SELECT
                 rl.id,
-                COUNT(DISTINCT rlc.chat_id) AS groups_count,
+                COALESCE(SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS groups_count,
                 COALESCE(SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS admin_count,
                 COALESCE(SUM(CASE WHEN COALESCE(c.bot_status, 'unknown') NOT IN ('not_member','left','kicked') THEN 1 ELSE 0 END), 0) AS member_count,
                 COALESCE(SUM(CASE WHEN COALESCE(c.bot_status, 'unknown') IN ('not_member','left','kicked') THEN 1 ELSE 0 END), 0) AS not_member_count,
@@ -1348,6 +1348,11 @@ async def get_chat_by_id(chat_id: int):
 
 async def get_referral_chat_count(link_id: int) -> int:
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM referral_link_chats WHERE link_id=?", (link_id,))
+        cursor = await db.execute("""
+            SELECT COUNT(*)
+            FROM referral_link_chats rlc
+            JOIN chats c ON c.chat_id = rlc.chat_id
+            WHERE rlc.link_id=? AND c.is_bot_admin=1
+        """, (link_id,))
         row = await cursor.fetchone()
         return int(row[0] or 0)

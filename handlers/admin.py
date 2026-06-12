@@ -128,12 +128,11 @@ async def referral_list(call: types.CallbackQuery):
         public_url = referral_private_url(bot_username, code)
         text += (
             f"{number}. 🔹 <b>{escape(name)}</b>\n"
-            f"👥 A’zo bo‘lgan guruh/kanallar: <b>{groups_count}</b>\n"
-            f"🛡 Admin bo‘lgan guruh/kanallar: <b>{admin_count}</b>\n"
+            f"🛡 Bot admin bo‘lgan guruh/kanallar: <b>{admin_count}</b>\n"
             f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
-            text=f"📄 {number}. {name[:30]} ({groups_count}/{admin_count})",
+            text=f"📄 {number}. {name[:30]} (admin: {admin_count})",
             callback_data=f"ref:detail:{link_id}:0:{page}"
         )])
 
@@ -174,15 +173,15 @@ async def referral_detail(call: types.CallbackQuery):
     if current_link:
         link_id, link_name, _, groups_count, admin_count, _ = current_link[:6]
         text = (
-            f"📄 <b>{escape(link_name)}</b> orqali qo‘shilgan guruh/kanallar\n"
+            f"📄 <b>{escape(link_name)}</b> orqali bot admin bo‘lgan guruh/kanallar\n"
             f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | "
-            f"Jami: <b>{groups_count}</b> | Admin: <b>{admin_count}</b>\n\n"
+            f"Admin: <b>{admin_count}</b>\n\n"
         )
     else:
-        text = "📄 <b>Ssilka orqali qo‘shilgan guruhlar</b>\n\n"
+        text = "📄 <b>Ssilka orqali bot admin bo‘lgan guruh/kanallar</b>\n\n"
 
     if total == 0:
-        text += "Bu ssilka orqali qo‘shilgan guruh/kanal topilmadi."
+        text += "Bu ssilka orqali bot admin qilingan guruh/kanal topilmadi."
     else:
         for number, row in enumerate(page_chats, start=start + 1):
             chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row

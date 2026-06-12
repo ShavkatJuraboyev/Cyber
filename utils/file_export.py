@@ -27,7 +27,13 @@ def export_chats_to_pdf(chats, filename="chats.pdf"):
     return filename
 
 
+def _only_admin_referral_chats(chats):
+    """Referral export uchun faqat bot admin bo‘lgan chatlarni qoldiradi."""
+    return [row for row in chats if len(row) > 3 and int(row[3] or 0) == 1]
+
+
 def export_referral_chats_to_txt(link_name, public_url, chats, filename="referral_chats.txt"):
+    chats = _only_admin_referral_chats(chats)
     with open(filename, "w", encoding="utf-8") as f:
         f.write(f"Giper ssilka: {link_name}\n")
         f.write(f"Ssilka: {public_url}\n")
@@ -52,6 +58,7 @@ def export_referral_chats_to_txt(link_name, public_url, chats, filename="referra
 
 
 def export_referral_chats_to_pdf(link_name, public_url, chats, filename="referral_chats.pdf"):
+    chats = _only_admin_referral_chats(chats)
     doc = SimpleDocTemplate(filename)
     styles = getSampleStyleSheet()
     story = []
