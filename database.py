@@ -347,42 +347,31 @@ async def update_chat_bot_status(chat_id: int, is_admin: int, bot_status: str):
 
 async def get_stats_summary():
     async with aiosqlite.connect(DB_PATH) as db:
-        async def fetch_count(sql: str, params: tuple = ()) -> int:
-            cursor = await db.execute(sql, params)
-            row = await cursor.fetchone()
-            return int(row[0] or 0)
+        cursor = await db.execute("SELECT COUNT(*) FROM chats")
+        chats_count = (await cursor.fetchone())[0]
 
-        inactive_statuses = ("not_member", "left", "kicked")
-        inactive_sql = "COALESCE(bot_status, 'unknown') IN ('not_member', 'left', 'kicked')"
-        active_sql = f"NOT ({inactive_sql})"
+        cursor = await db.execute("SELECT COUNT(*) FROM chats WHERE is_bot_admin=1")
+        bot_admin_chats = (await cursor.fetchone())[0]
 
-        chats_count = await fetch_count("SELECT COUNT(*) FROM chats")
-        bot_admin_chats = await fetch_count("SELECT COUNT(*) FROM chats WHERE is_bot_admin=1")
-        not_member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE {inactive_sql}")
-        member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE {active_sql}")
+        cursor = await db.execute("""
+            SELECT COUNT(*) FROM chats
+            WHERE COALESCE(bot_status, 'unknown') IN ('not_member', 'left', 'kicked')
+        """)
+        not_member_chats = (await cursor.fetchone())[0]
 
-        groups_count = await fetch_count("SELECT COUNT(*) FROM chats WHERE type IN ('group', 'supergroup')")
-        channels_count = await fetch_count("SELECT COUNT(*) FROM chats WHERE type='channel'")
-        group_member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE type IN ('group', 'supergroup') AND {active_sql}")
-        channel_member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE type='channel' AND {active_sql}")
-        group_admin_chats = await fetch_count("SELECT COUNT(*) FROM chats WHERE type IN ('group', 'supergroup') AND is_bot_admin=1")
-        channel_admin_chats = await fetch_count("SELECT COUNT(*) FROM chats WHERE type='channel' AND is_bot_admin=1")
+        cursor = await db.execute("SELECT COUNT(*) FROM users")
+        users_count = (await cursor.fetchone())[0]
 
-        users_count = await fetch_count("SELECT COUNT(*) FROM users")
-        unsafe_ext_count = await fetch_count("SELECT COUNT(*) FROM unsafe_extensions WHERE chat_id IS NULL")
-        bad_words_count = await fetch_count("SELECT COUNT(*) FROM bad_words WHERE chat_id IS NULL")
+        cursor = await db.execute("SELECT COUNT(*) FROM unsafe_extensions WHERE chat_id IS NULL")
+        unsafe_ext_count = (await cursor.fetchone())[0]
+
+        cursor = await db.execute("SELECT COUNT(*) FROM bad_words WHERE chat_id IS NULL")
+        bad_words_count = (await cursor.fetchone())[0]
 
         return {
             "chats_count": chats_count,
-            "member_chats": member_chats,
             "bot_admin_chats": bot_admin_chats,
             "not_member_chats": not_member_chats,
-            "groups_count": groups_count,
-            "channels_count": channels_count,
-            "group_member_chats": group_member_chats,
-            "channel_member_chats": channel_member_chats,
-            "group_admin_chats": group_admin_chats,
-            "channel_admin_chats": channel_admin_chats,
             "users_count": users_count,
             "unsafe_ext_count": unsafe_ext_count,
             "bad_words_count": bad_words_count,
