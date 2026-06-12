@@ -86,6 +86,9 @@ from database import (
     set_private_log_chat_id,
     get_private_log_chat_id,
     get_stats_summary,
+    get_stats_summary_cached,
+    get_chat_by_id,
+    get_referral_chat_count,
 )
 from utils.file_export import export_chats_to_pdf, export_chats_to_txt, export_referral_chats_to_pdf, export_referral_chats_to_txt
 
@@ -374,8 +377,7 @@ def back_to_main_kb() -> InlineKeyboardMarkup:
 
 def stats_kb() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Bazadan qayta ko‘rsatish", callback_data="stats")],
-        [InlineKeyboardButton(text="♻️ Guruh statuslarini yangilash", callback_data="stats:refresh_statuses")],
+        [InlineKeyboardButton(text="📊 Umumiy statistikani ko‘rish", callback_data="stats")],
         [InlineKeyboardButton(text="📋 Guruh/kanallar ro‘yxati", callback_data="chats:page:0")],
         [InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")],
     ])
@@ -506,10 +508,19 @@ async def refresh_one_chat_status(bot, chat_id: int) -> tuple[int, str]:
 
 
 async def refresh_all_chat_statuses(bot):
+    """Barcha saqlangan guruh/kanallar statusini Telegramdan real-vaqtga yaqin yangilaydi.
+
+    Tekshiruvlar parallel, lekin cheklangan holda bajariladi. Shu sabab 1000+ chat bo'lsa ham
+    panel bitta-bitta kutib qotib qolmaydi va Telegram limitlariga ham ehtiyot bo'ladi.
+    """
     chats = await get_all_chats()
-    for chat in chats:
-        chat_id = chat[0]
-        await refresh_one_chat_status(bot, chat_id)
+    semaphore = asyncio.Semaphore(20)
+
+    async def refresh_limited(chat_id: int):
+        async with semaphore:
+            return await refresh_one_chat_status(bot, chat_id)
+
+    await asyncio.gather(*(refresh_limited(int(chat[0])) for chat in chats), return_exceptions=True)
     return await get_all_chats()
 
 

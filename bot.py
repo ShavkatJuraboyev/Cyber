@@ -8,6 +8,7 @@ from aiogram.enums import ParseMode
 from config import BOT_TOKEN, LOG_LEVEL
 from database import init_db
 from handlers import routers
+from services.stat_cache import stats_cache_loop
 
 logging.basicConfig(
     level=getattr(logging, LOG_LEVEL, logging.INFO),
@@ -26,8 +27,13 @@ async def main():
     await init_db()
     for router in routers:
         dp.include_router(router)
+    cache_task = asyncio.create_task(stats_cache_loop(bot))
     logger.info("🤖 Bot ishga tushdi...")
-    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    try:
+        await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+    finally:
+        cache_task.cancel()
+        await asyncio.gather(cache_task, return_exceptions=True)
 
 
 if __name__ == "__main__":

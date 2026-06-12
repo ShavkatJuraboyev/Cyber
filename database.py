@@ -246,6 +246,46 @@ async def init_db():
         )
         """)
 
+
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS stats_cache (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            chats_count INTEGER DEFAULT 0,
+            member_chats INTEGER DEFAULT 0,
+            bot_admin_chats INTEGER DEFAULT 0,
+            not_member_chats INTEGER DEFAULT 0,
+            groups_count INTEGER DEFAULT 0,
+            channels_count INTEGER DEFAULT 0,
+            group_member_chats INTEGER DEFAULT 0,
+            channel_member_chats INTEGER DEFAULT 0,
+            group_admin_chats INTEGER DEFAULT 0,
+            channel_admin_chats INTEGER DEFAULT 0,
+            users_count INTEGER DEFAULT 0,
+            unsafe_ext_count INTEGER DEFAULT 0,
+            bad_words_count INTEGER DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        await db.execute("""
+        CREATE TABLE IF NOT EXISTS referral_stats_cache (
+            link_id INTEGER PRIMARY KEY,
+            groups_count INTEGER DEFAULT 0,
+            admin_count INTEGER DEFAULT 0,
+            member_count INTEGER DEFAULT 0,
+            not_member_count INTEGER DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(link_id) REFERENCES referral_links(id) ON DELETE CASCADE
+        )
+        """)
+
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chats_updated_at ON chats(updated_at DESC)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chats_status ON chats(bot_status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chats_type_admin ON chats(type, is_bot_admin)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_link_chats_link_added ON referral_link_chats(link_id, added_at DESC)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_link_chats_chat ON referral_link_chats(chat_id)")
+
         # CRUD/ROLE tizimi. Eski baza o'chmaydi, yangi jadvallar qo'shiladi.
         await db.execute("""
         CREATE TABLE IF NOT EXISTS panel_roles (
@@ -347,31 +387,42 @@ async def update_chat_bot_status(chat_id: int, is_admin: int, bot_status: str):
 
 async def get_stats_summary():
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("SELECT COUNT(*) FROM chats")
-        chats_count = (await cursor.fetchone())[0]
+        async def fetch_count(sql: str, params: tuple = ()) -> int:
+            cursor = await db.execute(sql, params)
+            row = await cursor.fetchone()
+            return int(row[0] or 0)
 
-        cursor = await db.execute("SELECT COUNT(*) FROM chats WHERE is_bot_admin=1")
-        bot_admin_chats = (await cursor.fetchone())[0]
+        inactive_statuses = ("not_member", "left", "kicked")
+        inactive_sql = "COALESCE(bot_status, 'unknown') IN ('not_member', 'left', 'kicked')"
+        active_sql = f"NOT ({inactive_sql})"
 
-        cursor = await db.execute("""
-            SELECT COUNT(*) FROM chats
-            WHERE COALESCE(bot_status, 'unknown') IN ('not_member', 'left', 'kicked')
-        """)
-        not_member_chats = (await cursor.fetchone())[0]
+        chats_count = await fetch_count("SELECT COUNT(*) FROM chats")
+        bot_admin_chats = await fetch_count("SELECT COUNT(*) FROM chats WHERE is_bot_admin=1")
+        not_member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE {inactive_sql}")
+        member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE {active_sql}")
 
-        cursor = await db.execute("SELECT COUNT(*) FROM users")
-        users_count = (await cursor.fetchone())[0]
+        groups_count = await fetch_count("SELECT COUNT(*) FROM chats WHERE type IN ('group', 'supergroup')")
+        channels_count = await fetch_count("SELECT COUNT(*) FROM chats WHERE type='channel'")
+        group_member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE type IN ('group', 'supergroup') AND {active_sql}")
+        channel_member_chats = await fetch_count(f"SELECT COUNT(*) FROM chats WHERE type='channel' AND {active_sql}")
+        group_admin_chats = await fetch_count("SELECT COUNT(*) FROM chats WHERE type IN ('group', 'supergroup') AND is_bot_admin=1")
+        channel_admin_chats = await fetch_count("SELECT COUNT(*) FROM chats WHERE type='channel' AND is_bot_admin=1")
 
-        cursor = await db.execute("SELECT COUNT(*) FROM unsafe_extensions WHERE chat_id IS NULL")
-        unsafe_ext_count = (await cursor.fetchone())[0]
-
-        cursor = await db.execute("SELECT COUNT(*) FROM bad_words WHERE chat_id IS NULL")
-        bad_words_count = (await cursor.fetchone())[0]
+        users_count = await fetch_count("SELECT COUNT(*) FROM users")
+        unsafe_ext_count = await fetch_count("SELECT COUNT(*) FROM unsafe_extensions WHERE chat_id IS NULL")
+        bad_words_count = await fetch_count("SELECT COUNT(*) FROM bad_words WHERE chat_id IS NULL")
 
         return {
             "chats_count": chats_count,
+            "member_chats": member_chats,
             "bot_admin_chats": bot_admin_chats,
             "not_member_chats": not_member_chats,
+            "groups_count": groups_count,
+            "channels_count": channels_count,
+            "group_member_chats": group_member_chats,
+            "channel_member_chats": channel_member_chats,
+            "group_admin_chats": group_admin_chats,
+            "channel_admin_chats": channel_admin_chats,
             "users_count": users_count,
             "unsafe_ext_count": unsafe_ext_count,
             "bad_words_count": bad_words_count,
@@ -864,27 +915,36 @@ async def get_referral_stats():
                 rl.id,
                 rl.name,
                 rl.code,
-                COUNT(DISTINCT rlc.chat_id) AS groups_count,
-                COALESCE(SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS admin_count,
-                rl.created_at
+                COALESCE(rsc.groups_count, COUNT(DISTINCT rlc.chat_id), 0) AS groups_count,
+                COALESCE(rsc.admin_count, SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS admin_count,
+                rl.created_at,
+                rsc.updated_at,
+                COALESCE(rsc.member_count, SUM(CASE WHEN COALESCE(c.bot_status, 'unknown') NOT IN ('not_member','left','kicked') THEN 1 ELSE 0 END), 0) AS member_count,
+                COALESCE(rsc.not_member_count, SUM(CASE WHEN COALESCE(c.bot_status, 'unknown') IN ('not_member','left','kicked') THEN 1 ELSE 0 END), 0) AS not_member_count
             FROM referral_links rl
-            LEFT JOIN referral_link_chats rlc ON rlc.link_id = rl.id
-            LEFT JOIN chats c ON c.chat_id = rlc.chat_id
+            LEFT JOIN referral_stats_cache rsc ON rsc.link_id = rl.id
+            LEFT JOIN referral_link_chats rlc ON rlc.link_id = rl.id AND rsc.link_id IS NULL
+            LEFT JOIN chats c ON c.chat_id = rlc.chat_id AND rsc.link_id IS NULL
             GROUP BY rl.id
             ORDER BY rl.id DESC
         """)
         return await cursor.fetchall()
 
 
-async def get_referral_chats(link_id: int):
+async def get_referral_chats(link_id: int, limit: int | None = None, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
-        cursor = await db.execute("""
+        sql = """
             SELECT c.chat_id, c.title, c.type, c.is_bot_admin, COALESCE(c.bot_status, 'unknown'), rlc.added_at, rlc.added_by
             FROM referral_link_chats rlc
             JOIN chats c ON c.chat_id = rlc.chat_id
             WHERE rlc.link_id=?
             ORDER BY rlc.added_at DESC
-        """, (link_id,))
+        """
+        params: tuple = (link_id,)
+        if limit is not None:
+            sql += " LIMIT ? OFFSET ?"
+            params = (link_id, int(limit), int(offset))
+        cursor = await db.execute(sql, params)
         return await cursor.fetchall()
 
 
@@ -1189,3 +1249,105 @@ async def get_private_log_chat_id() -> int | None:
             return int(row[0])
         except ValueError:
             return None
+
+
+async def save_stats_summary_cache(stats: dict):
+    """Umumiy statistikani cache jadvaliga saqlaydi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            INSERT INTO stats_cache (
+                id, chats_count, member_chats, bot_admin_chats, not_member_chats,
+                groups_count, channels_count, group_member_chats, channel_member_chats,
+                group_admin_chats, channel_admin_chats, users_count, unsafe_ext_count,
+                bad_words_count, updated_at
+            ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+            ON CONFLICT(id) DO UPDATE SET
+                chats_count=excluded.chats_count,
+                member_chats=excluded.member_chats,
+                bot_admin_chats=excluded.bot_admin_chats,
+                not_member_chats=excluded.not_member_chats,
+                groups_count=excluded.groups_count,
+                channels_count=excluded.channels_count,
+                group_member_chats=excluded.group_member_chats,
+                channel_member_chats=excluded.channel_member_chats,
+                group_admin_chats=excluded.group_admin_chats,
+                channel_admin_chats=excluded.channel_admin_chats,
+                users_count=excluded.users_count,
+                unsafe_ext_count=excluded.unsafe_ext_count,
+                bad_words_count=excluded.bad_words_count,
+                updated_at=CURRENT_TIMESTAMP
+        """, (
+            stats.get("chats_count", 0), stats.get("member_chats", 0), stats.get("bot_admin_chats", 0),
+            stats.get("not_member_chats", 0), stats.get("groups_count", 0), stats.get("channels_count", 0),
+            stats.get("group_member_chats", 0), stats.get("channel_member_chats", 0),
+            stats.get("group_admin_chats", 0), stats.get("channel_admin_chats", 0), stats.get("users_count", 0),
+            stats.get("unsafe_ext_count", 0), stats.get("bad_words_count", 0),
+        ))
+        await db.commit()
+
+
+async def get_stats_summary_cached():
+    """Tugma bosilganda faqat cache'dan o'qiladi; cache bo'lmasa SQL count bilan fallback qiladi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT chats_count, member_chats, bot_admin_chats, not_member_chats,
+                   groups_count, channels_count, group_member_chats, channel_member_chats,
+                   group_admin_chats, channel_admin_chats, users_count, unsafe_ext_count,
+                   bad_words_count, updated_at
+            FROM stats_cache WHERE id=1
+        """)
+        row = await cursor.fetchone()
+    if not row:
+        stats = await get_stats_summary()
+        stats["updated_at"] = None
+        return stats
+    keys = [
+        "chats_count", "member_chats", "bot_admin_chats", "not_member_chats",
+        "groups_count", "channels_count", "group_member_chats", "channel_member_chats",
+        "group_admin_chats", "channel_admin_chats", "users_count", "unsafe_ext_count",
+        "bad_words_count", "updated_at",
+    ]
+    return dict(zip(keys, row))
+
+
+async def rebuild_referral_stats_cache():
+    """Referral ssilkalar statistikasi cache'ini chats jadvalidagi oxirgi statuslar asosida yangilaydi."""
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM referral_stats_cache WHERE link_id NOT IN (SELECT id FROM referral_links)")
+        await db.execute("""
+            INSERT INTO referral_stats_cache (link_id, groups_count, admin_count, member_count, not_member_count, updated_at)
+            SELECT
+                rl.id,
+                COUNT(DISTINCT rlc.chat_id) AS groups_count,
+                COALESCE(SUM(CASE WHEN c.is_bot_admin=1 THEN 1 ELSE 0 END), 0) AS admin_count,
+                COALESCE(SUM(CASE WHEN COALESCE(c.bot_status, 'unknown') NOT IN ('not_member','left','kicked') THEN 1 ELSE 0 END), 0) AS member_count,
+                COALESCE(SUM(CASE WHEN COALESCE(c.bot_status, 'unknown') IN ('not_member','left','kicked') THEN 1 ELSE 0 END), 0) AS not_member_count,
+                CURRENT_TIMESTAMP
+            FROM referral_links rl
+            LEFT JOIN referral_link_chats rlc ON rlc.link_id = rl.id
+            LEFT JOIN chats c ON c.chat_id = rlc.chat_id
+            GROUP BY rl.id
+            ON CONFLICT(link_id) DO UPDATE SET
+                groups_count=excluded.groups_count,
+                admin_count=excluded.admin_count,
+                member_count=excluded.member_count,
+                not_member_count=excluded.not_member_count,
+                updated_at=CURRENT_TIMESTAMP
+        """)
+        await db.commit()
+
+
+async def get_chat_by_id(chat_id: int):
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT chat_id, title, type, invite_link, is_bot_admin, COALESCE(bot_status, 'unknown')
+            FROM chats WHERE chat_id=?
+        """, (chat_id,))
+        return await cursor.fetchone()
+
+
+async def get_referral_chat_count(link_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("SELECT COUNT(*) FROM referral_link_chats WHERE link_id=?", (link_id,))
+        row = await cursor.fetchone()
+        return int(row[0] or 0)
