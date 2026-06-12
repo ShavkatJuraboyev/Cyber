@@ -214,3 +214,7 @@ chats.txt
 
 **/chats.pdf
 **/chats.txt
+
+*.pdf
+*.txt
+!requirements.txt
