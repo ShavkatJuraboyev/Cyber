@@ -127,11 +127,12 @@ async def referral_list(call: types.CallbackQuery):
         public_url = referral_private_url(bot_username, code)
         text += (
             f"{number}. 🔹 <b>{escape(name)}</b>\n"
-            f"🛡 Bot admin bo‘lgan guruh/kanallar: <b>{admin_count}</b>\n"
+            f"👥 A’zo bo‘lgan guruh/kanallar: <b>{groups_count}</b>\n"
+            f"🛡 Admin bo‘lgan guruh/kanallar: <b>{admin_count}</b>\n"
             f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
-            text=f"📄 {number}. {name[:30]} ({admin_count})",
+            text=f"📄 {number}. {name[:30]} ({groups_count}/{admin_count})",
             callback_data=f"ref:detail:{link_id}:0:{page}"
         )])
 
@@ -161,8 +162,7 @@ async def referral_detail(call: types.CallbackQuery):
     await refresh_referral_statuses(call.bot, link_id)
     stats_rows = await get_referral_stats()
     current_link = next((row for row in stats_rows if row[0] == link_id), None)
-    all_chats = await get_referral_chats(link_id)
-    chats = [row for row in all_chats if row[3] == 1]
+    chats = await get_referral_chats(link_id)
     total = len(chats)
 
     max_page = max((total - 1) // REF_GROUPS_PER_PAGE, 0)
@@ -174,15 +174,15 @@ async def referral_detail(call: types.CallbackQuery):
     if current_link:
         _, link_name, _, groups_count, admin_count, _ = current_link
         text = (
-            f"📄 <b>{escape(link_name)}</b> orqali qo‘shilgan guruhlar\n"
+            f"📄 <b>{escape(link_name)}</b> orqali qo‘shilgan guruh/kanallar\n"
             f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | "
-            f"Bot admin bo‘lganlari: <b>{admin_count}</b>\n\n"
+            f"Jami: <b>{groups_count}</b> | Admin: <b>{admin_count}</b>\n\n"
         )
     else:
         text = "📄 <b>Ssilka orqali qo‘shilgan guruhlar</b>\n\n"
 
     if not chats:
-        text += "Bu ssilka orqali bot admin qilingan guruh/kanal topilmadi."
+        text += "Bu ssilka orqali qo‘shilgan guruh/kanal topilmadi."
     else:
         for number, row in enumerate(page_chats, start=start + 1):
             chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row
@@ -241,7 +241,7 @@ async def referral_export_handler(call: types.CallbackQuery):
     _, link_name, code, _, _ = link
     bot_username = (await call.bot.me()).username
     public_url = referral_private_url(bot_username, code)
-    chats = [row for row in await get_referral_chats(link_id) if row[3] == 1]
+    chats = await get_referral_chats(link_id)
 
     safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(link_name or link_id)).strip("_")[:40] or str(link_id)
     if export_type == "txt":
@@ -471,20 +471,27 @@ async def statistics_handler(call: types.CallbackQuery):
     if await deny_if_no_permission(call, "stats.read"):
         return
 
-    await call.answer("⏳ Statistika yuklanmoqda...")
+    await call.answer("⏳ Real statistika Telegramdan tekshirilmoqda...")
 
+    await refresh_all_chat_statuses(call.bot)
     stats = await get_stats_summary()
 
     text = (
-        "📊 <b>Statistika</b>\n\n"
-        f"👥 Guruh/kanallar: <b>{stats['chats_count']}</b>\n"
-        f"🛡 Bot admin bo‘lgan guruh/kanallar: <b>{stats['bot_admin_chats']}</b>\n"
-        f"🚪 Bot a’zo bo‘lmagan guruh/kanallar: <b>{stats['not_member_chats']}</b>\n"
+        "📊 <b>Real vaqt statistikasi</b>\n\n"
+        f"👥 Jami saqlangan guruh/kanallar: <b>{stats['chats_count']}</b>\n"
+        f"✅ Hozir bot a’zo bo‘lganlari: <b>{stats['member_chats']}</b>\n"
+        f"🛡 Hozir bot admin bo‘lganlari: <b>{stats['bot_admin_chats']}</b>\n"
+        f"🚪 Hozir bot a’zo bo‘lmaganlari: <b>{stats['not_member_chats']}</b>\n\n"
+        "📌 <b>Guruhlar bo‘yicha</b>\n"
+        f"• A’zo: <b>{stats['group_member_chats']}</b> / Saqlangan: <b>{stats['groups_count']}</b>\n"
+        f"• Admin: <b>{stats['group_admin_chats']}</b>\n\n"
+        "📢 <b>Kanallar bo‘yicha</b>\n"
+        f"• A’zo: <b>{stats['channel_member_chats']}</b> / Saqlangan: <b>{stats['channels_count']}</b>\n"
+        f"• Admin: <b>{stats['channel_admin_chats']}</b>\n\n"
         f"👤 Saqlangan foydalanuvchilar: <b>{stats['users_count']}</b>\n"
         f"🦠 Global xavfli kengaytmalar: <b>{stats['unsafe_ext_count']}</b>\n"
         f"🚫 Global yomon so‘zlar: <b>{stats['bad_words_count']}</b>\n\n"
-        "ℹ️ Bu tezkor statistika bazadan olinadi.\n"
-        "🔄 Guruh statuslarini alohida yangilash tavsiya qilinadi."
+        "ℹ️ Bu statistika tugma bosilgan paytda Telegramdan tekshirilib yangilanadi."
     )
 
     await safe_edit_text(call.message, text, reply_markup=stats_kb())
@@ -497,19 +504,24 @@ async def chats_page_handler(call: types.CallbackQuery):
 
     parts = call.data.split(":")
     page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
+    await call.answer("⏳ Guruh/kanallar real statusi tekshirilmoqda...")
     chats = await refresh_all_chat_statuses(call.bot)
     total = len(chats)
 
     if not chats:
         await safe_edit_text(call.message, "📋 Hozircha guruh yoki kanal yo‘q.", reply_markup=stats_kb())
-        return await call.answer()
+        return
 
     max_page = max((total - 1) // CHATS_PER_PAGE, 0)
     page = max(0, min(page, max_page))
     start = page * CHATS_PER_PAGE
     end = start + CHATS_PER_PAGE
 
-    text = f"📋 <b>Guruh/kanallar ro‘yxati</b>\nSahifa: <b>{page + 1}/{max_page + 1}</b> | Jami: <b>{total}</b>\n\n"
+    text = (
+        f"📋 <b>Guruh/kanallar ro‘yxati</b>\n"
+        f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | Jami: <b>{total}</b>\n"
+        "Status: <b>real vaqtda tekshirildi</b>\n\n"
+    )
     kb_rows = []
 
     for number, row in enumerate(chats[start:end], start=start + 1):
@@ -536,7 +548,6 @@ async def chats_page_handler(call: types.CallbackQuery):
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
     await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
-    await call.answer()
 
 
 @router.callback_query(F.data.startswith("chats:detail:"))
