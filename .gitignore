@@ -206,3 +206,11 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+
+# Chat log files
+chats.pdf
+chats.txt
+
+**/chats.pdf
+**/chats.txt
