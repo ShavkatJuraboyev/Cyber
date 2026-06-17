@@ -962,7 +962,7 @@ async def setting_save(message: types.Message, state: FSMContext):
     ranges = {
         "mute_minutes": (1, 4320),
         "max_warnings": (1, 20),
-        "max_file_mb": (1, 2000),
+        "max_file_mb": (1, 10000),
         "block_archives": (0, 1),
     }
     lo, hi = ranges[key]
