@@ -663,7 +663,6 @@ async def export_txt_handler(call: types.CallbackQuery):
     if await deny_if_no_permission(call, "exports.action"):
         return
     chats = await get_all_chats()
-    print(chats)
     file_path = export_chats_to_txt(chats)
     await call.message.answer_document(types.FSInputFile(file_path))
     await call.answer("✅ TXT tayyor")
@@ -674,7 +673,6 @@ async def export_pdf_handler(call: types.CallbackQuery):
     if await deny_if_no_permission(call, "exports.action"):
         return
     chats = await get_all_chats()
-    print(chats)
     file_path = export_chats_to_pdf(chats)
     await call.message.answer_document(types.FSInputFile(file_path))
     await call.answer("✅ PDF tayyor")
