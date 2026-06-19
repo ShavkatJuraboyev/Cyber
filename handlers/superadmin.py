@@ -468,14 +468,29 @@ async def role_template_create_handler(call: types.CallbackQuery):
 async def secret_log_menu(call: types.CallbackQuery):
     if await deny_if_no_permission(call, "secret_logs.read"):
         return
-    chat_id = await get_private_log_chat_id()
-    text = "🔐 <b>Maxfiy guruh</b>\n\n"
-    text += f"Joriy maxfiy guruh ID: <code>{chat_id}</code>\n\n" if chat_id else "Hali maxfiy guruh tanlanmagan.\n\n"
-    text += "Bot maxfiy guruhda admin bo‘lishi kerak. Superadmin maxfiy guruh ichida /set_secret_group yuborsa, shu guruh tanlanadi."
-    await call.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🧹 Maxfiy guruhni tozalash", callback_data="secret:clear")],
-        [InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")],
-    ]))
+    rows = await list_private_log_chats()
+    text = "🔐 <b>Maxfiy guruhlar</b>\n\n"
+    if rows:
+        text += f"Jami maxfiy guruh: <b>{len(rows)}</b>\n\n"
+        for i, row in enumerate(rows, start=1):
+            chat_id, title, chat_type, added_by, added_at = row
+            text += (
+                f"{i}. <b>{escape(title or str(chat_id))}</b>\n"
+                f"   ID: <code>{chat_id}</code> | Turi: <code>{escape(chat_type or '—')}</code>\n"
+                f"   Qo‘shgan: <code>{added_by or '—'}</code> | {format_samarkand(added_at)}\n\n"
+            )
+    else:
+        text += "Hali maxfiy guruh tanlanmagan.\n\n"
+    text += "Yangi maxfiy guruh qo‘shish uchun bot admin bo‘lgan guruh ichida superadmin <code>/set_secret_group</code> yuboradi. Bir nechta guruh qo‘shish mumkin."
+
+    kb_rows = []
+    for row in rows[:20]:
+        chat_id, title, *_ = row
+        kb_rows.append([InlineKeyboardButton(text=f"🗑 {str(title or chat_id)[:35]}", callback_data=f"secret:remove:{chat_id}")])
+    if rows:
+        kb_rows.append([InlineKeyboardButton(text="🧹 Hammasini tozalash", callback_data="secret:clear")])
+    kb_rows.append([InlineKeyboardButton(text="⬅️ Asosiy menyu", callback_data="menu:main")])
+    await call.message.edit_text(text[:3900], reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
 
 
@@ -483,8 +498,18 @@ async def secret_log_menu(call: types.CallbackQuery):
 async def secret_log_clear(call: types.CallbackQuery):
     if await deny_if_no_permission(call, "secret_logs.update"):
         return
-    await set_private_log_chat_id(None)
-    await call.answer("✅ Maxfiy guruh o‘chirildi", show_alert=True)
+    await clear_private_log_chats()
+    await call.answer("✅ Barcha maxfiy guruhlar o‘chirildi", show_alert=True)
+    await secret_log_menu(call)
+
+
+@router.callback_query(F.data.startswith("secret:remove:"))
+async def secret_log_remove(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "secret_logs.update"):
+        return
+    chat_id = int(call.data.split(":")[2])
+    await remove_private_log_chat(chat_id)
+    await call.answer("✅ Maxfiy guruh ro‘yxatdan o‘chirildi", show_alert=True)
     await secret_log_menu(call)
 
 
@@ -500,8 +525,7 @@ async def set_secret_group_cmd(message: types.Message):
             return await message.answer("Avval botni shu maxfiy guruhda admin qiling.")
     except Exception:
         return await message.answer("Bot statusini tekshirib bo‘lmadi.")
-    await set_private_log_chat_id(message.chat.id)
-    await add_or_update_chat(message.chat.id, message.chat.title or "Maxfiy guruh", message.chat.type, await get_chat_link(message.chat), 1, "administrator")
-    await message.answer(f"✅ Maxfiy guruh saqlandi: <code>{message.chat.id}</code>")
-
-
+    title = message.chat.title or "Maxfiy guruh"
+    await add_private_log_chat(message.chat.id, title, message.chat.type, message.from_user.id if message.from_user else None)
+    await add_or_update_chat(message.chat.id, title, message.chat.type, await get_chat_link(message.chat), 1, "administrator")
+    await message.answer(f"✅ Maxfiy guruh qo‘shildi: <b>{escape(title)}</b>\nID: <code>{message.chat.id}</code>")

@@ -186,10 +186,12 @@ async def referral_detail(call: types.CallbackQuery):
         for number, row in enumerate(page_chats, start=start + 1):
             chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row
             status = render_bot_status(is_admin, bot_status)
+            member_count = await get_chat_member_count_text(call.bot, chat_id)
             added_by_text = f" | Kim qo‘shgan: <code>{added_by}</code>" if added_by else ""
             text += (
                 f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
                 f"   ID: <code>{chat_id}</code> | {status}\n"
+                f"   👥 A’zolar soni: <b>{escape(member_count)}</b>\n"
                 f"   Qo‘shilgan: <code>{escape(format_samarkand(added_at))}</code>{added_by_text}\n\n"
             )
 
@@ -503,7 +505,7 @@ async def chats_page_handler(call: types.CallbackQuery):
 
     parts = call.data.split(":")
     page = int(parts[2]) if len(parts) > 2 and parts[2].isdigit() else 0
-    await call.answer("✅ Ro‘yxat bazadan olindi")
+    await call.answer("⏳ A’zolar soni Telegramdan tekshirilyapti...")
     total = await get_chat_count()
 
     if total == 0:
@@ -525,9 +527,11 @@ async def chats_page_handler(call: types.CallbackQuery):
 
     for number, row in enumerate(chats, start=start + 1):
         chat_id, title, chat_type, invite_link, is_admin, bot_status = row
+        member_count = await get_chat_member_count_text(call.bot, chat_id)
         text += (
             f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
             f"   Turi: <code>{escape(str(chat_type))}</code> | {render_bot_status(is_admin, bot_status)}\n"
+            f"   👥 A’zolar soni: <b>{escape(member_count)}</b>\n"
             f"   ID: <code>{chat_id}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
@@ -566,11 +570,13 @@ async def chat_detail_handler(call: types.CallbackQuery):
         return await call.answer()
 
     chat_id, title, chat_type, invite_link, is_admin, bot_status = row
+    member_count = await get_chat_member_count_text(call.bot, chat_id)
     text = (
         f"📌 <b>{escape(title or str(chat_id))}</b>\n\n"
         f"ID: <code>{chat_id}</code>\n"
         f"Turi: <code>{escape(str(chat_type))}</code>\n"
         f"Status: {render_bot_status(is_admin, bot_status)}\n"
+        f"👥 A’zolar soni: <b>{escape(member_count)}</b>\n"
         f"Link: {escape(invite_link or 'yo‘q')}\n\n"
     )
 
@@ -672,6 +678,24 @@ async def export_pdf_handler(call: types.CallbackQuery):
     file_path = export_chats_to_pdf(chats)
     await call.message.answer_document(types.FSInputFile(file_path))
     await call.answer("✅ PDF tayyor")
+
+
+@router.callback_query(F.data.startswith("export:users:"))
+async def export_users_handler(call: types.CallbackQuery):
+    if await deny_if_no_permission(call, "exports.action"):
+        return
+    export_type = call.data.split(":")[-1]
+    users = await get_all_users()
+    if export_type == "txt":
+        file_path = export_users_to_txt(users)
+        answer = "✅ Foydalanuvchilar TXT tayyor"
+    elif export_type == "pdf":
+        file_path = export_users_to_pdf(users)
+        answer = "✅ Foydalanuvchilar PDF tayyor"
+    else:
+        return await call.answer("❌ Noto‘g‘ri eksport turi.", show_alert=True)
+    await call.message.answer_document(types.FSInputFile(file_path))
+    await call.answer(answer)
 
 
 @router.callback_query(F.data == "bw:menu")

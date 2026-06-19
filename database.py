@@ -236,6 +236,30 @@ async def init_db():
         """)
 
         await db.execute("""
+        CREATE TABLE IF NOT EXISTS private_log_chats (
+            chat_id INTEGER PRIMARY KEY,
+            title TEXT,
+            type TEXT,
+            added_by INTEGER,
+            added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        # Eski versiyadagi bitta maxfiy guruh sozlamasini yangi ko‘p-guruh jadvaliga ko‘chirish.
+        cur = await db.execute("SELECT value FROM bot_private_settings WHERE key='private_log_chat_id'")
+        old_secret = await cur.fetchone()
+        if old_secret and old_secret[0]:
+            try:
+                old_chat_id = int(old_secret[0])
+                await db.execute("""
+                    INSERT OR IGNORE INTO private_log_chats (chat_id, title, type)
+                    VALUES (?, 'Maxfiy guruh', 'supergroup')
+                """, (old_chat_id,))
+            except (TypeError, ValueError):
+                pass
+
+        await db.execute("""
         CREATE TABLE IF NOT EXISTS panel_admin_permissions (
             user_id INTEGER NOT NULL,
             permission TEXT NOT NULL,
@@ -1227,19 +1251,60 @@ async def get_admin_audit_logs(limit: int = 30):
 
 
 async def set_private_log_chat_id(chat_id: int | None):
+    """Orqaga moslik uchun: None bo‘lsa hamma maxfiy guruhlarni tozalaydi, ID bo‘lsa bitta guruh qo‘shadi."""
+    if chat_id is None:
+        await clear_private_log_chats()
+    else:
+        await add_private_log_chat(chat_id, "Maxfiy guruh", "supergroup", None)
+
+
+async def add_private_log_chat(chat_id: int, title: str | None = None, chat_type: str | None = None, added_by: int | None = None):
     async with aiosqlite.connect(DB_PATH) as db:
-        if chat_id is None:
-            await db.execute("DELETE FROM bot_private_settings WHERE key='private_log_chat_id'")
-        else:
-            await db.execute("""
-                INSERT INTO bot_private_settings (key, value)
-                VALUES ('private_log_chat_id', ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
-            """, (str(chat_id),))
+        await db.execute("""
+            INSERT INTO private_log_chats (chat_id, title, type, added_by)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(chat_id) DO UPDATE SET
+                title=excluded.title,
+                type=excluded.type,
+                added_by=COALESCE(excluded.added_by, private_log_chats.added_by),
+                updated_at=CURRENT_TIMESTAMP
+        """, (chat_id, title or "Maxfiy guruh", chat_type or "supergroup", added_by))
+        await db.execute("""
+            INSERT INTO bot_private_settings (key, value)
+            VALUES ('private_log_chat_id', ?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=CURRENT_TIMESTAMP
+        """, (str(chat_id),))
         await db.commit()
 
 
+async def remove_private_log_chat(chat_id: int) -> bool:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("DELETE FROM private_log_chats WHERE chat_id=?", (chat_id,))
+        await db.commit()
+        return cur.rowcount > 0
+
+
+async def clear_private_log_chats():
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("DELETE FROM private_log_chats")
+        await db.execute("DELETE FROM bot_private_settings WHERE key='private_log_chat_id'")
+        await db.commit()
+
+
+async def list_private_log_chats():
+    async with aiosqlite.connect(DB_PATH) as db:
+        cur = await db.execute("""
+            SELECT chat_id, title, type, added_by, added_at
+            FROM private_log_chats
+            ORDER BY updated_at DESC
+        """)
+        return await cur.fetchall()
+
+
 async def get_private_log_chat_id() -> int | None:
+    rows = await list_private_log_chats()
+    if rows:
+        return int(rows[0][0])
     async with aiosqlite.connect(DB_PATH) as db:
         cur = await db.execute("SELECT value FROM bot_private_settings WHERE key='private_log_chat_id'")
         row = await cur.fetchone()
@@ -1249,6 +1314,10 @@ async def get_private_log_chat_id() -> int | None:
             return int(row[0])
         except ValueError:
             return None
+
+
+async def get_private_log_chat_ids() -> list[int]:
+    return [int(row[0]) for row in await list_private_log_chats()]
 
 
 async def save_stats_summary_cache(stats: dict):

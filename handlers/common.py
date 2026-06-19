@@ -85,12 +85,21 @@ from database import (
     get_admin_audit_logs,
     set_private_log_chat_id,
     get_private_log_chat_id,
+    add_private_log_chat,
+    remove_private_log_chat,
+    clear_private_log_chats,
+    list_private_log_chats,
+    get_private_log_chat_ids,
     get_stats_summary,
     get_stats_summary_cached,
     get_chat_by_id,
     get_referral_chat_count,
 )
-from utils.file_export import export_chats_to_pdf, export_chats_to_txt, export_referral_chats_to_pdf, export_referral_chats_to_txt
+from utils.file_export import (
+    export_chats_to_pdf, export_chats_to_txt,
+    export_users_to_pdf, export_users_to_txt,
+    export_referral_chats_to_pdf, export_referral_chats_to_txt,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -326,8 +335,12 @@ def main_menu_kb() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="👮 Adminlar", callback_data="pa:menu"),
         ],
         [
-            InlineKeyboardButton(text="📄 TXT eksport", callback_data="export:txt"),
-            InlineKeyboardButton(text="📑 PDF eksport", callback_data="export:pdf"),
+            InlineKeyboardButton(text="📄 Chat TXT", callback_data="export:txt"),
+            InlineKeyboardButton(text="📑 Chat PDF", callback_data="export:pdf"),
+        ],
+        [
+            InlineKeyboardButton(text="👥 User TXT", callback_data="export:users:txt"),
+            InlineKeyboardButton(text="👥 User PDF", callback_data="export:users:pdf"),
         ],
         [InlineKeyboardButton(text="🔐 Maxfiy guruh", callback_data="secret:menu")],
     ])
@@ -359,8 +372,12 @@ async def panel_menu_kb(user_id: int) -> InlineKeyboardMarkup:
         rows.append([InlineKeyboardButton(text="🔗 Giper ssilkalar", callback_data="ref:menu")])
     if module_has_any(perms, "exports"):
         rows.append([
-            InlineKeyboardButton(text="📄 TXT eksport", callback_data="export:txt"),
-            InlineKeyboardButton(text="📑 PDF eksport", callback_data="export:pdf"),
+            InlineKeyboardButton(text="📄 Chat TXT", callback_data="export:txt"),
+            InlineKeyboardButton(text="📑 Chat PDF", callback_data="export:pdf"),
+        ])
+        rows.append([
+            InlineKeyboardButton(text="👥 User TXT", callback_data="export:users:txt"),
+            InlineKeyboardButton(text="👥 User PDF", callback_data="export:users:pdf"),
         ])
     if module_has_any(perms, "secret_logs"):
         rows.append([InlineKeyboardButton(text="🔐 Maxfiy guruh", callback_data="secret:menu")])
@@ -523,6 +540,18 @@ async def refresh_all_chat_statuses(bot):
     await asyncio.gather(*(refresh_limited(int(chat[0])) for chat in chats), return_exceptions=True)
     return await get_all_chats()
 
+
+
+async def get_chat_member_count_text(bot, chat_id: int) -> str:
+    """Guruh/kanaldagi real a'zolar sonini Telegramdan oladi."""
+    try:
+        count = await bot.get_chat_member_count(chat_id)
+        return f"{int(count):,}".replace(",", " ")
+    except (TelegramForbiddenError, TelegramBadRequest):
+        return "bot kira olmaydi"
+    except Exception as exc:
+        logger.warning("A'zolar sonini olishda xato. chat_id=%s error=%s", chat_id, exc)
+        return "aniqlanmadi"
 
 def render_bot_status(is_admin: int, bot_status: str | None = None) -> str:
     if bot_status in {"not_member", "left", "kicked"}:

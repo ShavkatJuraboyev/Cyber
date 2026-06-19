@@ -118,8 +118,8 @@ def file_reason(doc: types.Document, filename: str, settings: dict, unsafe_exts:
 
 
 async def send_unsafe_file_to_secret_group(message: types.Message, reason: str, filename: str):
-    private_log_chat_id = await get_private_log_chat_id()
-    if not private_log_chat_id or not message.document:
+    private_log_chat_ids = await get_private_log_chat_ids()
+    if not private_log_chat_ids or not message.document:
         return
 
     sender_name = "Noma’lum"
@@ -145,23 +145,24 @@ async def send_unsafe_file_to_secret_group(message: types.Message, reason: str, 
         f"⚠️ Sabab: <b>{escape(reason)}</b>"
     )
 
-    try:
-        await message.bot.send_document(
-            private_log_chat_id,
-            message.document.file_id,
-            caption=caption,
-            request_timeout=60,
-        )
-    except Exception as exc:
-        logger.exception("Maxfiy guruhga fayl yuborishda xato: %s", exc)
+    for private_log_chat_id in private_log_chat_ids:
         try:
-            await message.bot.send_message(
+            await message.bot.send_document(
                 private_log_chat_id,
-                caption + "\n\n⚠️ Faylni yuborishda network xatolik bo‘ldi, lekin guruhdagi zararli xabar o‘chirildi.",
-                request_timeout=30,
+                message.document.file_id,
+                caption=caption,
+                request_timeout=60,
             )
-        except Exception as exc2:
-            logger.exception("Maxfiy guruhga matnli log yuborishda xato: %s", exc2)
+        except Exception as exc:
+            logger.exception("Maxfiy guruhga fayl yuborishda xato: %s", exc)
+            try:
+                await message.bot.send_message(
+                    private_log_chat_id,
+                    caption + "\n\n⚠️ Faylni yuborishda network xatolik bo‘ldi, lekin guruhdagi zararli xabar o‘chirildi.",
+                    request_timeout=30,
+                )
+            except Exception as exc2:
+                logger.exception("Maxfiy guruhga matnli log yuborishda xato: %s", exc2)
 
 
 async def process_unsafe_document(message: types.Message):

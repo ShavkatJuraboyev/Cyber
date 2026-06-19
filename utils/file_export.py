@@ -84,3 +84,46 @@ def export_referral_chats_to_pdf(link_name, public_url, chats, filename="referra
 
     doc.build(story)
     return filename
+
+
+def export_users_to_txt(users, filename="users.txt"):
+    with open(filename, "w", encoding="utf-8") as f:
+        f.write(f"Foydalanuvchilar soni: {len(users)}\n")
+        f.write("=" * 60 + "\n\n")
+        for i, row in enumerate(users, start=1):
+            user_id, first_name, last_name, username, language_code, joined_at = row[:6]
+            full_name = f"{first_name or ''} {last_name or ''}".strip() or "Noma’lum"
+            username_text = f"@{username}" if username else "—"
+            f.write(f"{i}. {full_name}\n")
+            f.write(f"   ID: {user_id}\n")
+            f.write(f"   Username: {username_text}\n")
+            f.write(f"   Til: {language_code or '—'}\n")
+            f.write(f"   Qo‘shilgan: {format_samarkand(joined_at)}\n\n")
+    return filename
+
+
+def export_users_to_pdf(users, filename="users.pdf"):
+    doc = SimpleDocTemplate(filename)
+    styles = getSampleStyleSheet()
+    story = []
+    story.append(Paragraph("<b>Foydalanuvchilar ro‘yxati</b>", styles["Title"]))
+    story.append(Paragraph(f"<b>Jami:</b> {len(users)}", styles["Normal"]))
+    story.append(Paragraph("<br/>", styles["Normal"]))
+
+    if not users:
+        story.append(Paragraph("Foydalanuvchilar topilmadi.", styles["Normal"]))
+    else:
+        for i, row in enumerate(users, start=1):
+            user_id, first_name, last_name, username, language_code, joined_at = row[:6]
+            full_name = f"{first_name or ''} {last_name or ''}".strip() or "Noma’lum"
+            username_text = f"@{username}" if username else "—"
+            text = (
+                f"<b>{i}. {xml_escape(str(full_name))}</b><br/>"
+                f"ID: {user_id} | Username: {xml_escape(str(username_text))} | Til: {xml_escape(str(language_code or '—'))}<br/>"
+                f"Qo‘shilgan: {xml_escape(format_samarkand(joined_at))}"
+            )
+            story.append(Paragraph(text, styles["Normal"]))
+            story.append(Paragraph("<br/>", styles["Normal"]))
+
+    doc.build(story)
+    return filename
