@@ -245,7 +245,7 @@ async def referral_list(call: types.CallbackQuery):
             f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
-            text=f"📄 {number}. {name[:30]} (admin: {admin_count} | a'zo: {member_gt_10_count})",
+            text=f"📄 {number}. {name[:30]} (admin: {admin_count} | {member_gt_10_count})",
             callback_data=f"ref:detail:{link_id}:0:{page}"
         )])
 
