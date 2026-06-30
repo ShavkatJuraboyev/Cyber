@@ -52,7 +52,7 @@ async def init_db():
             invite_link TEXT,
             is_bot_admin INTEGER DEFAULT 0,
             bot_status TEXT DEFAULT 'unknown',
-            member_count INTEGER DEFAULT 0,
+            member_count INTEGER DEFAULT NULL,
             member_count_updated_at TIMESTAMP,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -82,13 +82,21 @@ async def init_db():
 
         if "member_count" not in column_names:
             await db.execute(
-                "ALTER TABLE chats ADD COLUMN member_count INTEGER DEFAULT 0"
+                "ALTER TABLE chats ADD COLUMN member_count INTEGER DEFAULT NULL"
             )
 
         if "member_count_updated_at" not in column_names:
             await db.execute(
                 "ALTER TABLE chats ADD COLUMN member_count_updated_at TIMESTAMP"
             )
+
+        # Eski bazada member_count ustuni yangi qo‘shilganda hamma chatlarga 0 yozilgan bo‘lishi mumkin.
+        # 0 real a'zolar soni emas, "hali olinmagan" degani. Shuning uchun NULL qilib qo‘yamiz.
+        await db.execute("""
+            UPDATE chats
+            SET member_count=NULL
+            WHERE member_count=0 AND member_count_updated_at IS NULL
+        """)
 
         await db.execute("""
         CREATE TABLE IF NOT EXISTS users (
@@ -981,7 +989,7 @@ async def get_referral_chats(link_id: int, limit: int | None = None, offset: int
                 COALESCE(c.bot_status, 'unknown'),
                 rlc.added_at,
                 rlc.added_by,
-                COALESCE(c.member_count, 0)
+                c.member_count
             FROM referral_link_chats rlc
             JOIN chats c ON c.chat_id = rlc.chat_id
             WHERE rlc.link_id=? AND c.is_bot_admin=1
@@ -1003,7 +1011,7 @@ async def count_referral_chats_member_gt_10(link_id: int) -> int:
             JOIN chats c ON c.chat_id = rlc.chat_id
             WHERE rlc.link_id=?
               AND c.is_bot_admin=1
-              AND COALESCE(c.member_count, 0) > 10
+              AND c.member_count > 10
         """, (link_id,))
         row = await cursor.fetchone()
         return int(row[0] or 0)
@@ -1017,7 +1025,7 @@ async def update_chat_member_count(chat_id: int, member_count: int | None):
                 member_count_updated_at=CURRENT_TIMESTAMP,
                 updated_at=CURRENT_TIMESTAMP
             WHERE chat_id=?
-        """, (int(member_count or 0), chat_id))
+        """, (None if member_count is None else int(member_count), chat_id))
         await db.commit()
 
 async def get_chats_without_referral():

@@ -39,6 +39,13 @@ async def chat_member_handler(event: types.ChatMemberUpdated):
             getattr(status, "value", str(status)),
         )
 
+        if _is_active_chat_status(status):
+            try:
+                member_count = int(await event.bot.get_chat_member_count(chat.id))
+                await update_chat_member_count(chat.id, member_count)
+            except Exception as exc:
+                logger.warning("A'zolar sonini saqlab bo‘lmadi. chat_id=%s error=%s", chat.id, exc)
+
         # Referral tracking faqat bot admin qilinganda emas, bot chatga qo‘shilgan
         # har qanday holatda ishlashi kerak. Shunda admin panelda "qo‘shilgan" va
         # "admin qilingan" sonlari alohida ko‘rinadi.

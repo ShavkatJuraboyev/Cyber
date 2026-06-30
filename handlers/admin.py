@@ -45,18 +45,55 @@ async def count_referral_chats_with_members_gt_10(bot, link_id: int) -> int:
     return await count_referral_chats_member_gt_10(link_id)
 
 
-async def build_all_referral_excel_data(bot):
-    """Barcha giper ssilkalar uchun Excelga tayyor data yig‘adi.
+async def refresh_missing_member_counts_for_referrals(bot, link_id: int | None = None, concurrency: int = 5):
+    """A'zolar soni bazada yo‘q bo‘lgan chatlar uchun Telegramdan olib, bazaga saqlaydi.
 
-    Faqat SQLite bazadan o‘qiydi. Telegram API chaqirilmaydi.
+    Bu funksiya exportdan oldin ishlaydi. Semaphore sababli 30 000 ta chat bo‘lsa ham
+    bot event loop qotmaydi va Telegramga birdaniga minglab so‘rov ketmaydi.
     """
+    link_ids = [link_id] if link_id is not None else [row[0] for row in await get_referral_stats()]
+
+    chat_ids: list[int] = []
+    seen: set[int] = set()
+    for lid in link_ids:
+        for chat in await get_referral_chats(lid):
+            chat_id = int(chat[0])
+            member_count = chat[7] if len(chat) > 7 else None
+            if chat_id not in seen and member_count is None:
+                seen.add(chat_id)
+                chat_ids.append(chat_id)
+
+    if not chat_ids:
+        return
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def refresh_one(chat_id: int):
+        async with semaphore:
+            try:
+                count = int(await bot.get_chat_member_count(chat_id))
+                await update_chat_member_count(chat_id, count)
+                await asyncio.sleep(0.05)
+            except (TelegramForbiddenError, TelegramBadRequest):
+                await update_chat_member_count(chat_id, None)
+            except Exception as exc:
+                logger.warning("A'zolar sonini yangilashda xato. chat_id=%s error=%s", chat_id, exc)
+
+    await asyncio.gather(*(refresh_one(cid) for cid in chat_ids), return_exceptions=True)
+
+
+async def build_all_referral_excel_data(bot):
+    """Barcha giper ssilkalar uchun Excelga tayyor data yig‘adi."""
+    # Avval bazada yo‘q a'zolar sonlarini real Telegramdan olib qo‘yamiz.
+    await refresh_missing_member_counts_for_referrals(bot)
+
     bot_username = (await bot.me()).username
     result = []
     for row in await get_referral_stats():
         link_id, name, code, groups_count, admin_count, created_at = row[:6]
         public_url = referral_private_url(bot_username, code)
         chats = await get_referral_chats(link_id)
-        member_gt_10_count = sum(1 for chat in chats if len(chat) > 7 and int(chat[7] or 0) > 10)
+        member_gt_10_count = sum(1 for chat in chats if len(chat) > 7 and chat[7] is not None and int(chat[7]) > 10)
 
         result.append({
             "name": name,
@@ -168,7 +205,7 @@ async def referral_list(call: types.CallbackQuery):
             f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
-            text=f"📄 {number}. {name[:30]} (admin: {admin_count} | {member_gt_10_count})",
+            text=f"📄 {number}. {name[:30]} (admin: {admin_count} | a'zo: {member_gt_10_count})",
             callback_data=f"ref:detail:{link_id}:0:{page}"
         )])
 
@@ -255,6 +292,9 @@ async def referral_detail(call: types.CallbackQuery):
         InlineKeyboardButton(text="📄 TXT yuklab olish", callback_data=f"ref:export:txt:{link_id}:{back_page}"),
         InlineKeyboardButton(text="📕 PDF yuklab olish", callback_data=f"ref:export:pdf:{link_id}:{back_page}"),
     ])
+    kb_rows.append([
+        InlineKeyboardButton(text="📗 Barcha ssilkalarni Excel yuklab olish", callback_data=f"ref:export:xlsx:all:{back_page}"),
+    ])
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
@@ -271,7 +311,7 @@ async def referral_export_handler(call: types.CallbackQuery):
     export_type = parts[2]
 
     if export_type == "xlsx" and len(parts) > 3 and parts[3] == "all":
-        await call.answer("⏳ Excel tayyorlanmoqda...")
+        await call.answer("⏳ Excel tayyorlanmoqda. A’zolar soni yo‘q bo‘lsa avval Telegramdan olinadi...", show_alert=True)
         referral_data = await build_all_referral_excel_data(call.bot)
         file_path = await asyncio.to_thread(
             export_all_referral_chats_to_xlsx,
@@ -302,7 +342,7 @@ async def referral_export_handler(call: types.CallbackQuery):
             link_name,
             public_url,
             chats,
-            f"referral_{link_id}_{safe_name}.txt"
+            f"referral_chats.txt"
         )
         caption = "✅ TXT tayyor."
     elif export_type == "pdf":
@@ -312,7 +352,7 @@ async def referral_export_handler(call: types.CallbackQuery):
             link_name,
             public_url,
             chats,
-            f"referral_{link_id}_{safe_name}.pdf"
+            f"referral_chats.pdf"
         )
         caption = "✅ PDF tayyor."
     else:
