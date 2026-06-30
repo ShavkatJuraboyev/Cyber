@@ -77,6 +77,8 @@ from database import (
     reset_warning,
     set_mute_minutes,
     update_chat_bot_status,
+    update_chat_member_count,
+    count_referral_chats_member_gt_10,
     update_setting,
     update_setting_for_all_chats,
     set_panel_admin_expiry,
@@ -544,10 +546,11 @@ async def refresh_all_chat_statuses(bot):
 
 
 async def get_chat_member_count_text(bot, chat_id: int) -> str:
-    """Guruh/kanaldagi real a'zolar sonini Telegramdan oladi."""
+    """Guruh/kanaldagi real a'zolar sonini Telegramdan oladi va bazaga saqlaydi."""
     try:
-        count = await bot.get_chat_member_count(chat_id)
-        return f"{int(count):,}".replace(",", " ")
+        count = int(await bot.get_chat_member_count(chat_id))
+        await update_chat_member_count(chat_id, count)
+        return f"{count:,}".replace(",", " ")
     except (TelegramForbiddenError, TelegramBadRequest):
         return "bot kira olmaydi"
     except Exception as exc:

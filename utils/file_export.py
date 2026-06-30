@@ -45,10 +45,12 @@ def export_referral_chats_to_txt(link_name, public_url, chats, filename="referra
             return filename
 
         for i, row in enumerate(chats, start=1):
-            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row
+            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row[:7]
+            member_count = row[7] if len(row) > 7 else None
             f.write(f"{i}. {title or chat_id}\n")
             f.write(f"   ID: {chat_id}\n")
             f.write(f"   Turi: {chat_type}\n")
+            f.write(f"   A’zolar soni: {member_count if member_count not in (None, '') else 'bazada yo‘q'}\n")
             f.write(f"   Status: {bot_status} | Admin: {bool(is_admin)}\n")
             f.write(f"   Qo‘shilgan: {format_samarkand(added_at)}\n")
             if added_by:
@@ -72,11 +74,14 @@ def export_referral_chats_to_pdf(link_name, public_url, chats, filename="referra
         story.append(Paragraph("Bu ssilka orqali bot admin qilingan guruh/kanal topilmadi.", styles["Normal"]))
     else:
         for i, row in enumerate(chats, start=1):
-            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row
+            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row[:7]
+            member_count = row[7] if len(row) > 7 else None
+            member_count_text = member_count if member_count not in (None, '') else 'bazada yo‘q'
             added_by_text = f" | Kim qo‘shgan: {added_by}" if added_by else ""
             text = (
                 f"<b>{i}. {xml_escape(str(title or chat_id))}</b><br/>"
-                f"ID: {chat_id} | Turi: {xml_escape(str(chat_type))} | Status: {xml_escape(str(bot_status))} | Admin: {bool(is_admin)}<br/>"
+                f"ID: {chat_id} | Turi: {xml_escape(str(chat_type))} | A’zolar: {xml_escape(str(member_count_text))}<br/>"
+                f"Status: {xml_escape(str(bot_status))} | Admin: {bool(is_admin)}<br/>"
                 f"Qo‘shilgan: {xml_escape(format_samarkand(added_at))}{xml_escape(str(added_by_text))}"
             )
             story.append(Paragraph(text, styles["Normal"]))
@@ -178,7 +183,8 @@ def export_all_referral_chats_to_xlsx(referral_data, filename="referral_links.xl
         chats = item.get("chats") or []
 
         for chat in chats:
-            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by, member_count = chat
+            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = chat[:7]
+            member_count = chat[7] if len(chat) > 7 else None
 
             values = [
                 tr,

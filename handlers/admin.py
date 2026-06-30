@@ -35,53 +35,35 @@ async def refresh_referral_statuses(bot, link_id: int | None = None):
             await refresh_one_chat_status(bot, chat_id)
 
 
-async def get_chat_member_count_int(bot, chat_id: int) -> int | None:
-    """Telegramdan a'zolar sonini int qilib oladi. Xato bo‘lsa None qaytaradi."""
-    try:
-        return int(await bot.get_chat_member_count(chat_id))
-    except (TelegramForbiddenError, TelegramBadRequest):
-        return None
-    except Exception as exc:
-        logger.warning("A'zolar sonini olishda xato. chat_id=%s error=%s", chat_id, exc)
-        return None
-
-
 async def count_referral_chats_with_members_gt_10(bot, link_id: int) -> int:
-    """Shu giper ssilka orqali qo‘shilgan va a'zolari 10 tadan ko‘p bo‘lgan chatlar soni."""
-    chats = await get_referral_chats(link_id)
-    count = 0
-    for row in chats:
-        chat_id = row[0]
-        member_count = await get_chat_member_count_int(bot, chat_id)
-        if member_count is not None and member_count > 10:
-            count += 1
-    return count
+    """Bazadagi saqlangan member_count bo‘yicha 10+ a'zoli chatlar soni.
+
+    Muhim: export/statistika paytida Telegram API'ga 30 000 marta so‘rov yubormaydi,
+    shu sabab bot qotib qolmaydi. Member count bazaga detail sahifada yoki alohida
+    yangilash jarayonlarida saqlanadi.
+    """
+    return await count_referral_chats_member_gt_10(link_id)
 
 
 async def build_all_referral_excel_data(bot):
-    """Barcha giper ssilkalar uchun Excelga tayyor data yig‘adi."""
+    """Barcha giper ssilkalar uchun Excelga tayyor data yig‘adi.
+
+    Faqat SQLite bazadan o‘qiydi. Telegram API chaqirilmaydi.
+    """
     bot_username = (await bot.me()).username
     result = []
     for row in await get_referral_stats():
         link_id, name, code, groups_count, admin_count, created_at = row[:6]
         public_url = referral_private_url(bot_username, code)
         chats = await get_referral_chats(link_id)
-
-        enriched_chats = []
-        member_gt_10_count = 0
-        for chat in chats:
-            chat_id = chat[0]
-            member_count = await get_chat_member_count_int(bot, chat_id)
-            if member_count is not None and member_count > 10:
-                member_gt_10_count += 1
-            enriched_chats.append((*chat, member_count))
+        member_gt_10_count = sum(1 for chat in chats if len(chat) > 7 and int(chat[7] or 0) > 10)
 
         result.append({
             "name": name,
             "url": public_url,
             "admin_count": admin_count,
             "member_gt_10_count": member_gt_10_count,
-            "chats": enriched_chats,
+            "chats": chats,
         })
     return result
 
@@ -186,7 +168,7 @@ async def referral_list(call: types.CallbackQuery):
             f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
-            text=f"📄 {number}. {name[:30]} (admin: {admin_count} | a'zo: {member_gt_10_count})",
+            text=f"📄 {number}. {name[:30]} (admin: {admin_count} | {member_gt_10_count})",
             callback_data=f"ref:detail:{link_id}:0:{page}"
         )])
 
@@ -241,9 +223,9 @@ async def referral_detail(call: types.CallbackQuery):
         text += "Bu ssilka orqali bot admin qilingan guruh/kanal topilmadi."
     else:
         for number, row in enumerate(page_chats, start=start + 1):
-            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by = row
+            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by, member_count_db = row
             status = render_bot_status(is_admin, bot_status)
-            member_count = await get_chat_member_count_text(call.bot, chat_id)
+            member_count = f"{int(member_count_db or 0):,}".replace(",", " ") if member_count_db else "bazada yo‘q"
             added_by_text = f" | Kim qo‘shgan: <code>{added_by}</code>" if added_by else ""
             text += (
                 f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
@@ -273,9 +255,6 @@ async def referral_detail(call: types.CallbackQuery):
         InlineKeyboardButton(text="📄 TXT yuklab olish", callback_data=f"ref:export:txt:{link_id}:{back_page}"),
         InlineKeyboardButton(text="📕 PDF yuklab olish", callback_data=f"ref:export:pdf:{link_id}:{back_page}"),
     ])
-    kb_rows.append([
-        InlineKeyboardButton(text="📗 Barcha ssilkalarni Excel yuklab olish", callback_data=f"ref:export:xlsx:all:{back_page}"),
-    ])
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
@@ -292,10 +271,15 @@ async def referral_export_handler(call: types.CallbackQuery):
     export_type = parts[2]
 
     if export_type == "xlsx" and len(parts) > 3 and parts[3] == "all":
+        await call.answer("⏳ Excel tayyorlanmoqda...")
         referral_data = await build_all_referral_excel_data(call.bot)
-        file_path = export_all_referral_chats_to_xlsx(referral_data, filename="giper_ssilkalar.xlsx")
+        file_path = await asyncio.to_thread(
+            export_all_referral_chats_to_xlsx,
+            referral_data,
+            "giper_ssilkalar.xlsx"
+        )
         await call.message.answer_document(types.FSInputFile(file_path), caption="✅ Excel tayyor.")
-        return await call.answer("✅ Excel fayl yuborildi")
+        return
 
     link_id = int(parts[3])
     back_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
@@ -312,10 +296,24 @@ async def referral_export_handler(call: types.CallbackQuery):
 
     safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(link_name or link_id)).strip("_")[:40] or str(link_id)
     if export_type == "txt":
-        file_path = export_referral_chats_to_txt(link_name, public_url, chats, filename=f"referral_{link_id}_{safe_name}.txt")
+        await call.answer("⏳ TXT tayyorlanmoqda...")
+        file_path = await asyncio.to_thread(
+            export_referral_chats_to_txt,
+            link_name,
+            public_url,
+            chats,
+            f"referral_{link_id}_{safe_name}.txt"
+        )
         caption = "✅ TXT tayyor."
     elif export_type == "pdf":
-        file_path = export_referral_chats_to_pdf(link_name, public_url, chats, filename=f"referral_{link_id}_{safe_name}.pdf")
+        await call.answer("⏳ PDF tayyorlanmoqda...")
+        file_path = await asyncio.to_thread(
+            export_referral_chats_to_pdf,
+            link_name,
+            public_url,
+            chats,
+            f"referral_{link_id}_{safe_name}.pdf"
+        )
         caption = "✅ PDF tayyor."
     else:
         await call.answer("❌ Noto‘g‘ri export turi.", show_alert=True)

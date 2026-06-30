@@ -52,6 +52,8 @@ async def init_db():
             invite_link TEXT,
             is_bot_admin INTEGER DEFAULT 0,
             bot_status TEXT DEFAULT 'unknown',
+            member_count INTEGER DEFAULT 0,
+            member_count_updated_at TIMESTAMP,
             added_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
@@ -76,6 +78,16 @@ async def init_db():
         if "updated_at" not in column_names:
             await db.execute(
                 "ALTER TABLE chats ADD COLUMN updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+            )
+
+        if "member_count" not in column_names:
+            await db.execute(
+                "ALTER TABLE chats ADD COLUMN member_count INTEGER DEFAULT 0"
+            )
+
+        if "member_count_updated_at" not in column_names:
+            await db.execute(
+                "ALTER TABLE chats ADD COLUMN member_count_updated_at TIMESTAMP"
             )
 
         await db.execute("""
@@ -309,6 +321,9 @@ async def init_db():
         await db.execute("CREATE INDEX IF NOT EXISTS idx_chats_type_admin ON chats(type, is_bot_admin)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_link_chats_link_added ON referral_link_chats(link_id, added_at DESC)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_link_chats_chat ON referral_link_chats(chat_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_referral_link_chats_link_id ON referral_link_chats(link_id)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chats_admin_status ON chats(is_bot_admin, bot_status)")
+        await db.execute("CREATE INDEX IF NOT EXISTS idx_chats_member_count ON chats(member_count)")
 
         # CRUD/ROLE tizimi. Eski baza o'chmaydi, yangi jadvallar qo'shiladi.
         await db.execute("""
@@ -958,7 +973,15 @@ async def get_referral_stats():
 async def get_referral_chats(link_id: int, limit: int | None = None, offset: int = 0):
     async with aiosqlite.connect(DB_PATH) as db:
         sql = """
-            SELECT c.chat_id, c.title, c.type, c.is_bot_admin, COALESCE(c.bot_status, 'unknown'), rlc.added_at, rlc.added_by
+            SELECT
+                c.chat_id,
+                c.title,
+                c.type,
+                c.is_bot_admin,
+                COALESCE(c.bot_status, 'unknown'),
+                rlc.added_at,
+                rlc.added_by,
+                COALESCE(c.member_count, 0)
             FROM referral_link_chats rlc
             JOIN chats c ON c.chat_id = rlc.chat_id
             WHERE rlc.link_id=? AND c.is_bot_admin=1
@@ -971,6 +994,31 @@ async def get_referral_chats(link_id: int, limit: int | None = None, offset: int
         cursor = await db.execute(sql, params)
         return await cursor.fetchall()
 
+
+async def count_referral_chats_member_gt_10(link_id: int) -> int:
+    async with aiosqlite.connect(DB_PATH) as db:
+        cursor = await db.execute("""
+            SELECT COUNT(*)
+            FROM referral_link_chats rlc
+            JOIN chats c ON c.chat_id = rlc.chat_id
+            WHERE rlc.link_id=?
+              AND c.is_bot_admin=1
+              AND COALESCE(c.member_count, 0) > 10
+        """, (link_id,))
+        row = await cursor.fetchone()
+        return int(row[0] or 0)
+
+
+async def update_chat_member_count(chat_id: int, member_count: int | None):
+    async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("""
+            UPDATE chats
+            SET member_count=?,
+                member_count_updated_at=CURRENT_TIMESTAMP,
+                updated_at=CURRENT_TIMESTAMP
+            WHERE chat_id=?
+        """, (int(member_count or 0), chat_id))
+        await db.commit()
 
 async def get_chats_without_referral():
     async with aiosqlite.connect(DB_PATH) as db:
