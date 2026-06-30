@@ -217,4 +217,6 @@ chats.txt
 *.pdf
 *.txt
 
-.xlsx
+# Excel files
+*.xlsx
+*.xls
