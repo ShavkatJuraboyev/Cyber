@@ -82,6 +82,46 @@ async def refresh_missing_member_counts_for_referrals(bot, link_id: int | None =
     await asyncio.gather(*(refresh_one(cid) for cid in chat_ids), return_exceptions=True)
 
 
+async def refresh_member_counts_for_rows(bot, rows, concurrency: int = 5):
+    """Detail sahifada ko‘rinayotgan chatlarning a'zolar sonini yangilaydi.
+
+    Faqat member_count bazada NULL bo‘lganlarini Telegramdan oladi.
+    30 000 ta chatni birdaniga emas, faqat ochilgan sahifadagi chatlarni yangilaydi.
+    """
+    missing_chat_ids = []
+    seen = set()
+
+    for row in rows or []:
+        try:
+            chat_id = int(row[0])
+        except Exception:
+            continue
+
+        member_count = row[7] if len(row) > 7 else None
+        if member_count is None and chat_id not in seen:
+            seen.add(chat_id)
+            missing_chat_ids.append(chat_id)
+
+    if not missing_chat_ids:
+        return
+
+    semaphore = asyncio.Semaphore(concurrency)
+
+    async def refresh_one(chat_id: int):
+        async with semaphore:
+            try:
+                count = int(await bot.get_chat_member_count(chat_id))
+                await update_chat_member_count(chat_id, count)
+                await asyncio.sleep(0.05)
+            except (TelegramForbiddenError, TelegramBadRequest):
+                # Bot kira olmaydigan chatlarda NULL qoldiramiz, keyin yana urinib ko‘rishi mumkin.
+                logger.warning("A'zolar sonini olib bo‘lmadi. chat_id=%s", chat_id)
+            except Exception as exc:
+                logger.warning("A'zolar sonini yangilashda xato. chat_id=%s error=%s", chat_id, exc)
+
+    await asyncio.gather(*(refresh_one(chat_id) for chat_id in missing_chat_ids), return_exceptions=True)
+
+
 async def build_all_referral_excel_data(bot):
     """Barcha giper ssilkalar uchun Excelga tayyor data yig‘adi."""
     # Avval bazada yo‘q a'zolar sonlarini real Telegramdan olib qo‘yamiz.
@@ -244,6 +284,11 @@ async def referral_detail(call: types.CallbackQuery):
     end = start + REF_GROUPS_PER_PAGE
     page_chats = await get_referral_chats(link_id, limit=REF_GROUPS_PER_PAGE, offset=start)
 
+    # Shu sahifadagi chatlarda a'zolar soni bazada yo‘q bo‘lsa, Telegramdan olib bazaga yozamiz.
+    # Keyin ro‘yxatni qayta o‘qiymiz, shunda "bazada yo‘q" o‘rniga real son chiqadi.
+    await refresh_member_counts_for_rows(call.bot, page_chats)
+    page_chats = await get_referral_chats(link_id, limit=REF_GROUPS_PER_PAGE, offset=start)
+
     if current_link:
         link_id, link_name, _, groups_count, admin_count, _ = current_link[:6]
         member_gt_10_count = await count_referral_chats_with_members_gt_10(call.bot, link_id)
@@ -262,7 +307,11 @@ async def referral_detail(call: types.CallbackQuery):
         for number, row in enumerate(page_chats, start=start + 1):
             chat_id, title, chat_type, is_admin, bot_status, added_at, added_by, member_count_db = row
             status = render_bot_status(is_admin, bot_status)
-            member_count = f"{int(member_count_db or 0):,}".replace(",", " ") if member_count_db else "bazada yo‘q"
+            member_count = (
+                f"{int(member_count_db):,}".replace(",", " ")
+                if member_count_db is not None
+                else "bazada yo‘q"
+            )
             added_by_text = f" | Kim qo‘shgan: <code>{added_by}</code>" if added_by else ""
             text += (
                 f"{number}. <b>{escape(title or str(chat_id))}</b>\n"
@@ -316,7 +365,7 @@ async def referral_export_handler(call: types.CallbackQuery):
         file_path = await asyncio.to_thread(
             export_all_referral_chats_to_xlsx,
             referral_data,
-            "giper_ssilkalar.xlsx"
+            "giper_links.xlsx"
         )
         await call.message.answer_document(types.FSInputFile(file_path), caption="✅ Excel tayyor.")
         return
@@ -332,6 +381,9 @@ async def referral_export_handler(call: types.CallbackQuery):
     _, link_name, code, _, _ = link
     bot_username = (await call.bot.me()).username
     public_url = referral_private_url(bot_username, code)
+
+    # TXT/PDF exportda ham a'zolar soni yo‘q bo‘lsa avval Telegramdan olib bazaga yozamiz.
+    await refresh_missing_member_counts_for_referrals(call.bot, link_id=link_id)
     chats = await get_referral_chats(link_id)
 
     safe_name = re.sub(r"[^a-zA-Z0-9_-]+", "_", str(link_name or link_id)).strip("_")[:40] or str(link_id)

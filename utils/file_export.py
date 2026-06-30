@@ -135,7 +135,7 @@ def export_users_to_pdf(users, filename="users.pdf"):
 
 
 
-def export_all_referral_chats_to_xlsx(referral_data, filename="referral_links.xlsx"):
+def export_all_referral_chats_to_xlsx(referral_data, filename="giper_links.xlsx"):
     from openpyxl import Workbook
     from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
     from openpyxl.utils import get_column_letter
