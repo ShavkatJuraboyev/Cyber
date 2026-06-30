@@ -34,6 +34,58 @@ async def refresh_referral_statuses(bot, link_id: int | None = None):
             seen.add(chat_id)
             await refresh_one_chat_status(bot, chat_id)
 
+
+async def get_chat_member_count_int(bot, chat_id: int) -> int | None:
+    """Telegramdan a'zolar sonini int qilib oladi. Xato bo‘lsa None qaytaradi."""
+    try:
+        return int(await bot.get_chat_member_count(chat_id))
+    except (TelegramForbiddenError, TelegramBadRequest):
+        return None
+    except Exception as exc:
+        logger.warning("A'zolar sonini olishda xato. chat_id=%s error=%s", chat_id, exc)
+        return None
+
+
+async def count_referral_chats_with_members_gt_10(bot, link_id: int) -> int:
+    """Shu giper ssilka orqali qo‘shilgan va a'zolari 10 tadan ko‘p bo‘lgan chatlar soni."""
+    chats = await get_referral_chats(link_id)
+    count = 0
+    for row in chats:
+        chat_id = row[0]
+        member_count = await get_chat_member_count_int(bot, chat_id)
+        if member_count is not None and member_count > 10:
+            count += 1
+    return count
+
+
+async def build_all_referral_excel_data(bot):
+    """Barcha giper ssilkalar uchun Excelga tayyor data yig‘adi."""
+    bot_username = (await bot.me()).username
+    result = []
+    for row in await get_referral_stats():
+        link_id, name, code, groups_count, admin_count, created_at = row[:6]
+        public_url = referral_private_url(bot_username, code)
+        chats = await get_referral_chats(link_id)
+
+        enriched_chats = []
+        member_gt_10_count = 0
+        for chat in chats:
+            chat_id = chat[0]
+            member_count = await get_chat_member_count_int(bot, chat_id)
+            if member_count is not None and member_count > 10:
+                member_gt_10_count += 1
+            enriched_chats.append((*chat, member_count))
+
+        result.append({
+            "name": name,
+            "url": public_url,
+            "admin_count": admin_count,
+            "member_gt_10_count": member_gt_10_count,
+            "chats": enriched_chats,
+        })
+    return result
+
+
 async def referral_menu_kb(user_id: int) -> InlineKeyboardMarkup:
     perms = await get_admin_effective_permissions(user_id) if not is_super_admin(user_id) else set(PANEL_PERMISSIONS)
     rows = []
@@ -125,14 +177,16 @@ async def referral_list(call: types.CallbackQuery):
 
     for number, row in enumerate(page_rows, start=start + 1):
         link_id, name, code, groups_count, admin_count, created_at = row[:6]
+        member_gt_10_count = await count_referral_chats_with_members_gt_10(call.bot, link_id)
         public_url = referral_private_url(bot_username, code)
         text += (
             f"{number}. 🔹 <b>{escape(name)}</b>\n"
             f"🛡 Bot admin bo‘lgan guruh/kanallar: <b>{admin_count}</b>\n"
+            f"👥 A’zosi 10 tadan ko‘p guruh/kanallar: <b>{member_gt_10_count}</b>\n"
             f"🔗 Giper ssilka: <code>{escape(public_url)}</code>\n\n"
         )
         kb_rows.append([InlineKeyboardButton(
-            text=f"📄 {number}. {name[:30]} (admin: {admin_count})",
+            text=f"📄 {number}. {name[:30]} (admin: {admin_count} | a'zo: {member_gt_10_count})",
             callback_data=f"ref:detail:{link_id}:0:{page}"
         )])
 
@@ -144,6 +198,7 @@ async def referral_list(call: types.CallbackQuery):
     if nav:
         kb_rows.append(nav)
 
+    kb_rows.append([InlineKeyboardButton(text="📗 Excel yuklab olish", callback_data=f"ref:export:xlsx:all:{page}")])
     kb_rows.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="ref:menu")])
     await safe_edit_text(call.message, text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
     await call.answer()
@@ -172,10 +227,12 @@ async def referral_detail(call: types.CallbackQuery):
 
     if current_link:
         link_id, link_name, _, groups_count, admin_count, _ = current_link[:6]
+        member_gt_10_count = await count_referral_chats_with_members_gt_10(call.bot, link_id)
         text = (
             f"📄 <b>{escape(link_name)}</b> orqali bot admin bo‘lgan guruh/kanallar\n"
             f"Sahifa: <b>{page + 1}/{max_page + 1}</b> | "
-            f"Admin: <b>{admin_count}</b>\n\n"
+            f"Admin: <b>{admin_count}</b> | "
+            f"10+ a’zoli: <b>{member_gt_10_count}</b>\n\n"
         )
     else:
         text = "📄 <b>Ssilka orqali bot admin bo‘lgan guruh/kanallar</b>\n\n"
@@ -216,6 +273,9 @@ async def referral_detail(call: types.CallbackQuery):
         InlineKeyboardButton(text="📄 TXT yuklab olish", callback_data=f"ref:export:txt:{link_id}:{back_page}"),
         InlineKeyboardButton(text="📕 PDF yuklab olish", callback_data=f"ref:export:pdf:{link_id}:{back_page}"),
     ])
+    kb_rows.append([
+        InlineKeyboardButton(text="📗 Barcha ssilkalarni Excel yuklab olish", callback_data=f"ref:export:xlsx:all:{back_page}"),
+    ])
     kb_rows.append([InlineKeyboardButton(text="⬅️ Statistikaga qaytish", callback_data=f"ref:list:{back_page}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Asosiy menyu", callback_data="menu:main")])
 
@@ -230,6 +290,13 @@ async def referral_export_handler(call: types.CallbackQuery):
 
     parts = call.data.split(":")
     export_type = parts[2]
+
+    if export_type == "xlsx" and len(parts) > 3 and parts[3] == "all":
+        referral_data = await build_all_referral_excel_data(call.bot)
+        file_path = export_all_referral_chats_to_xlsx(referral_data, filename="giper_ssilkalar.xlsx")
+        await call.message.answer_document(types.FSInputFile(file_path), caption="✅ Excel tayyor.")
+        return await call.answer("✅ Excel fayl yuborildi")
+
     link_id = int(parts[3])
     back_page = int(parts[4]) if len(parts) > 4 and parts[4].isdigit() else 0
 

@@ -127,3 +127,84 @@ def export_users_to_pdf(users, filename="users.pdf"):
 
     doc.build(story)
     return filename
+
+
+
+def export_all_referral_chats_to_xlsx(referral_data, filename="referral_links.xlsx"):
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Guruh kanallar"
+
+    headers = [
+        "TR",
+        "Guruh/kanallar nomi",
+        "Guruh/kanallar turi",
+        "Id",
+        "Azolar soni",
+        "Kim qo'shgani",
+        "Giper\nssilkasi nomi",
+    ]
+
+    blue = PatternFill("solid", fgColor="8DB4D9")
+    title_blue = PatternFill("solid", fgColor="4F81BD")
+    bold = Font(bold=True)
+    thin = Side(style="thin", color="000000")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    # Katta sarlavha
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=len(headers))
+    title_cell = ws.cell(row=1, column=1, value="Guruh/kanallar ro'yxati")
+    title_cell.fill = title_blue
+    title_cell.font = Font(bold=True, size=14)
+    title_cell.alignment = Alignment(horizontal="center", vertical="center")
+
+    # Jadval shapka
+    for col_idx, header in enumerate(headers, start=1):
+        cell = ws.cell(row=2, column=col_idx, value=header)
+        cell.fill = blue
+        cell.font = bold
+        cell.border = border
+        cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    row = 3
+    tr = 1
+
+    for item in referral_data:
+        link_name = item.get("name") or "Nomsiz ssilka"
+        chats = item.get("chats") or []
+
+        for chat in chats:
+            chat_id, title, chat_type, is_admin, bot_status, added_at, added_by, member_count = chat
+
+            values = [
+                tr,
+                title or "",
+                chat_type or "",
+                chat_id or "",
+                member_count if member_count is not None else "",
+                added_by or "",
+                link_name,
+            ]
+
+            for col_idx, value in enumerate(values, start=1):
+                cell = ws.cell(row=row, column=col_idx, value=value)
+                cell.border = border
+                cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+            row += 1
+            tr += 1
+
+    widths = [8, 28, 28, 18, 18, 22, 18]
+    for col_idx, width in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(col_idx)].width = width
+
+    ws.row_dimensions[1].height = 25
+    ws.row_dimensions[2].height = 45
+    ws.freeze_panes = "A3"
+
+    wb.save(filename)
+    return filename

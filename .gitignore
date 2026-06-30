@@ -216,3 +216,5 @@ chats.txt
 **/chats.txt
 *.pdf
 *.txt
+
+.xlsx

@@ -99,6 +99,7 @@ from utils.file_export import (
     export_chats_to_pdf, export_chats_to_txt,
     export_users_to_pdf, export_users_to_txt,
     export_referral_chats_to_pdf, export_referral_chats_to_txt,
+    export_all_referral_chats_to_xlsx,
 )
 
 logger = logging.getLogger(__name__)
